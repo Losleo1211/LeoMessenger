@@ -23,10 +23,14 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -38,6 +42,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -133,6 +138,58 @@ class SmsReceiver : BroadcastReceiver() {
 private const val PREFS_NAME = "leos_messenger"
 private const val PREFS_CHATS = "chats_v102"
 private const val PREFS_MESSAGES_ALT = "nachrichten"
+private const val PREFS_FARBE = "einstellung_farbe"
+private const val PREFS_FARBE_EMPFANG = "farbe_empfang"
+private const val PREFS_FARBE_GESENDET = "farbe_gesendet"
+private const val PREFS_FARBE_UEBERSICHT = "farbe_uebersicht"
+private const val PREFS_DESIGN = "einstellung_design"
+
+private fun ladeFarbe(context: Context): String =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREFS_FARBE, "Blau") ?: "Blau"
+
+private fun speichereFarbe(context: Context, wert: String) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(PREFS_FARBE, wert).apply()
+}
+
+private fun ladeEinzelFarbe(context: Context, key: String, standard: String): String =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(key, standard) ?: standard
+private fun speichereEinzelFarbe(context: Context, key: String, wert: String) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(key, wert).apply()
+}
+
+private fun ladeDesign(context: Context): String =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREFS_DESIGN, "Wie jetzt") ?: "Wie jetzt"
+
+private fun speichereDesign(context: Context, wert: String) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(PREFS_DESIGN, wert).apply()
+}
+
+private fun farbeAuswahl(name: String): Color = when (name) {
+    "Weiß" -> Color(0xFFF5F5F5)
+    "Hellgrau" -> Color(0xFFCFD8DC)
+    "Grau" -> Color(0xFF90A4AE)
+    "Dunkelgrau" -> Color(0xFF455A64)
+    "Hellblau" -> Color(0xFF64B5F6)
+    "Blau" -> Color(0xFF1976D2)
+    "Dunkelblau" -> Color(0xFF0D47A1)
+    "Türkis" -> Color(0xFF00A99D)
+    "Hellgrün" -> Color(0xFF9CCC65)
+    "Grün" -> Color(0xFF2E7D32)
+    "Gelb" -> Color(0xFFFFC107)
+    "Orange" -> Color(0xFFF57C00)
+    "Rot" -> Color(0xFFD32F2F)
+    "Rosa" -> Color(0xFFEC407A)
+    "Violett" -> Color(0xFF7B1FA2)
+    else -> Color(0xFF1976D2)
+}
+
+private fun kontrastFarbe(hintergrund: Color): Color {
+    val helligkeit = 0.299 * hintergrund.red + 0.587 * hintergrund.green + 0.114 * hintergrund.blue
+    return if (helligkeit > 0.60) Color(0xFF111111) else Color.White
+}
+
+private fun sekundaerTextFarbe(hintergrund: Color): Color =
+    kontrastFarbe(hintergrund).copy(alpha = 0.72f)
 
 private fun startChats(): List<Chat> {
     val jetzt = System.currentTimeMillis()
@@ -262,7 +319,7 @@ private fun speichereChats(context: Context, chats: List<Chat>) {
 private fun istStandardSmsApp(context: Context): Boolean =
     Telephony.Sms.getDefaultSmsPackage(context) == context.packageName
 
-private fun importiereSystemSms(context: Context, bestehend: List<Chat>): List<Chat> {
+private fun importiereSystemSms(context: Context, bestehend: List<Chat>, meldungAnzeigen: Boolean = true): List<Chat> {
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
         Toast.makeText(context, "SMS-Leseberechtigung fehlt.", Toast.LENGTH_LONG).show()
         return bestehend
@@ -351,12 +408,14 @@ private fun importiereSystemSms(context: Context, bestehend: List<Chat>): List<C
             it.nachrichten.maxOfOrNull { n -> n.zeitMillis } ?: 0L
         }
         speichereChats(context, sortiert)
-        Toast.makeText(
-            context,
-            if (gelesen == 0) "Im Android-SMS-Speicher wurden keine Nachrichten gefunden."
-            else "SMS-Speicher gelesen: $gelesen Nachrichten, $neuImportiert neu importiert.",
-            Toast.LENGTH_LONG
-        ).show()
+        if (meldungAnzeigen) {
+            Toast.makeText(
+                context,
+                if (gelesen == 0) "Im Android-SMS-Speicher wurden keine Nachrichten gefunden."
+                else "SMS-Speicher gelesen: $gelesen Nachrichten, $neuImportiert neu importiert.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
         sortiert
     } catch (e: Exception) {
         Toast.makeText(
@@ -386,6 +445,25 @@ private fun speichereGesendeteSmsImSystem(context: Context, telefon: String, tex
 fun MessengerApp(context: Context) {
     var standardSms by remember { mutableStateOf(istStandardSmsApp(context)) }
     val chats = remember { mutableStateListOf<Chat>().apply { addAll(ladeChats(context)) } }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // V1.0.12: Sobald die App wieder in den Vordergrund kommt, den Android-SMS-Speicher
+    // leise synchronisieren. So erscheinen SMS, die zwischenzeitlich von Android gespeichert
+    // wurden, ohne dass der Benutzer jedes Mal den manuellen Import starten muss.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME &&
+                istStandardSmsApp(context) &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+            ) {
+                val synchronisiert = importiereSystemSms(context, ladeChats(context), meldungAnzeigen = false)
+                chats.clear()
+                chats.addAll(synchronisiert)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val berechtigungsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -461,6 +539,13 @@ fun MessengerApp(context: Context) {
     var neuerChatDialog by remember { mutableStateOf(false) }
     var bearbeitenChat by remember { mutableStateOf<Chat?>(null) }
     var loeschenChat by remember { mutableStateOf<Chat?>(null) }
+    var einstellungenOffen by remember { mutableStateOf(false) }
+    var farbName by remember { mutableStateOf(ladeFarbe(context)) }
+    var farbeEmpfang by remember { mutableStateOf(ladeEinzelFarbe(context, PREFS_FARBE_EMPFANG, "Hellblau")) }
+    var farbeGesendet by remember { mutableStateOf(ladeEinzelFarbe(context, PREFS_FARBE_GESENDET, "Gelb")) }
+    var farbeUebersicht by remember { mutableStateOf(ladeEinzelFarbe(context, PREFS_FARBE_UEBERSICHT, farbName)) }
+    var designName by remember { mutableStateOf(ladeDesign(context)) }
+    val akzentFarbe = farbeAuswahl(farbeUebersicht)
 
     val offenerChat = chats.firstOrNull { it.id == offenerChatId }
 
@@ -469,6 +554,8 @@ fun MessengerApp(context: Context) {
             chats = chats,
             onChatClick = { offenerChatId = it.id },
             onNeuerChat = { neuerChatDialog = true },
+            akzentFarbe = akzentFarbe,
+            onEinstellungen = { einstellungenOffen = true },
             onSmsNeuEinlesen = {
                 val lesenErlaubt = ContextCompat.checkSelfPermission(
                     context, Manifest.permission.READ_SMS
@@ -488,6 +575,10 @@ fun MessengerApp(context: Context) {
         BackHandler { offenerChatId = null }
         ChatAnsicht(
             chat = offenerChat,
+            akzentFarbe = akzentFarbe,
+            designName = designName,
+            farbeEmpfang = farbeAuswahl(farbeEmpfang),
+            farbeGesendet = farbeAuswahl(farbeGesendet),
             onZurueck = { offenerChatId = null },
             onNachrichtSenden = { text ->
                 if (sendeSms(context, offenerChat.telefon, text)) {
@@ -556,6 +647,29 @@ fun MessengerApp(context: Context) {
                     speichereChats(context, chats)
                 }
                 bearbeitenChat = null
+            }
+        )
+    }
+
+    if (einstellungenOffen) {
+        EinstellungenDialog(
+            aktuelleFarbeEmpfang = farbeEmpfang,
+            aktuelleFarbeGesendet = farbeGesendet,
+            aktuelleFarbeUebersicht = farbeUebersicht,
+            aktuellesDesign = designName,
+            onAbbrechen = { einstellungenOffen = false },
+            onSpeichern = { empfang, gesendet, uebersicht, design ->
+                farbeEmpfang = empfang
+                farbeGesendet = gesendet
+                farbeUebersicht = uebersicht
+                farbName = uebersicht
+                designName = design
+                speichereEinzelFarbe(context, PREFS_FARBE_EMPFANG, empfang)
+                speichereEinzelFarbe(context, PREFS_FARBE_GESENDET, gesendet)
+                speichereEinzelFarbe(context, PREFS_FARBE_UEBERSICHT, uebersicht)
+                speichereFarbe(context, uebersicht)
+                speichereDesign(context, design)
+                einstellungenOffen = false
             }
         )
     }
@@ -705,18 +819,80 @@ private fun ChatNameDialog(
     )
 }
 
+@Composable
+private fun EinstellungenDialog(
+    aktuelleFarbeEmpfang: String,
+    aktuelleFarbeGesendet: String,
+    aktuelleFarbeUebersicht: String,
+    aktuellesDesign: String,
+    onAbbrechen: () -> Unit,
+    onSpeichern: (String, String, String, String) -> Unit
+) {
+    val farben = listOf(
+        "Weiß", "Hellgrau", "Grau", "Dunkelgrau",
+        "Hellblau", "Blau", "Dunkelblau", "Türkis",
+        "Hellgrün", "Grün", "Gelb", "Orange", "Rot", "Rosa", "Violett"
+    )
+    val designs = listOf("Wie jetzt", "Sprechblasen")
+    var empfang by remember(aktuelleFarbeEmpfang) { mutableStateOf(aktuelleFarbeEmpfang) }
+    var gesendet by remember(aktuelleFarbeGesendet) { mutableStateOf(aktuelleFarbeGesendet) }
+    var uebersicht by remember(aktuelleFarbeUebersicht) { mutableStateOf(aktuelleFarbeUebersicht) }
+    var design by remember(aktuellesDesign) { mutableStateOf(aktuellesDesign) }
+
+    @Composable fun Farbreihe(titel: String, wert: String, setzen: (String) -> Unit) {
+        Text(titel, fontWeight = FontWeight.SemiBold)
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            farben.chunked(8).forEach { zeile ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    zeile.forEach { f ->
+                        val farbe = farbeAuswahl(f)
+                        Box(Modifier.size(30.dp).background(farbe, CircleShape).clickable { setzen(f) }, contentAlignment = Alignment.Center) {
+                            if (wert == f) Text("✓", color = kontrastFarbe(farbe), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onAbbrechen,
+        title = { Text("Einstellungen") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("Farben", fontWeight = FontWeight.Bold)
+                Farbreihe("Empfangene Nachrichten", empfang) { empfang = it }
+                Farbreihe("Gesendete Nachrichten", gesendet) { gesendet = it }
+                Farbreihe("Chatübersicht", uebersicht) { uebersicht = it }
+                HorizontalDivider()
+                Text("Design", fontWeight = FontWeight.Bold)
+                designs.forEach { eintrag ->
+                    Row(Modifier.fillMaxWidth().clickable { design = eintrag }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = design == eintrag, onClick = { design = eintrag })
+                        Text(eintrag)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSpeichern(empfang, gesendet, uebersicht, design) }) { Text("Speichern") } },
+        dismissButton = { TextButton(onClick = onAbbrechen) { Text("Abbrechen") } }
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatUebersicht(
     chats: List<Chat>,
     onChatClick: (Chat) -> Unit,
     onNeuerChat: () -> Unit,
+    akzentFarbe: Color,
+    onEinstellungen: () -> Unit,
     onSmsNeuEinlesen: () -> Unit,
     onBearbeiten: (Chat) -> Unit,
     onLoeschen: (Chat) -> Unit
 ) {
     var suche by remember { mutableStateOf("") }
     var hauptmenuOffen by remember { mutableStateOf(false) }
+    var infoOffen by remember { mutableStateOf(false) }
     val gefilterteChats = remember(chats, suche) {
         val q = suche.trim()
         if (q.isBlank()) chats else chats.filter { chat ->
@@ -724,6 +900,23 @@ private fun ChatUebersicht(
                 chat.telefon.contains(q, ignoreCase = true) ||
                 chat.nachrichten.any { it.text.contains(q, ignoreCase = true) }
         }
+    }
+
+    if (infoOffen) {
+        val anzahlNachrichten = chats.sumOf { it.nachrichten.size }
+        AlertDialog(
+            onDismissRequest = { infoOffen = false },
+            title = { Text("Leo`s Messenger V1.1.4") },
+            text = {
+                Text(
+                    "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
+                        "Neu: Der SMS-Verlauf wird beim Öffnen bzw. Zurückkehren zur App automatisch mit dem Android-SMS-Speicher synchronisiert."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { infoOffen = false }) { Text("OK") }
+            }
+        )
     }
 
     Scaffold(
@@ -745,10 +938,24 @@ private fun ChatUebersicht(
                             onDismissRequest = { hauptmenuOffen = false }
                         ) {
                             DropdownMenuItem(
+                                text = { Text("Einstellungen") },
+                                onClick = {
+                                    hauptmenuOffen = false
+                                    onEinstellungen()
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("SMS-Verlauf neu einlesen") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     onSmsNeuEinlesen()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Info zu V1.1.4") },
+                                onClick = {
+                                    hauptmenuOffen = false
+                                    infoOffen = true
                                 }
                             )
                         }
@@ -757,7 +964,7 @@ private fun ChatUebersicht(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onNeuerChat) {
+            FloatingActionButton(onClick = onNeuerChat, containerColor = akzentFarbe, contentColor = Color.White) {
                 Text("+", fontSize = 28.sp)
             }
         }
@@ -803,6 +1010,7 @@ private fun ChatUebersicht(
                     items(gefilterteChats, key = { it.id }) { chat ->
                         ChatZeile(
                             chat = chat,
+                            akzentFarbe = akzentFarbe,
                             onClick = { onChatClick(chat) },
                             onBearbeiten = { onBearbeiten(chat) },
                             onLoeschen = { onLoeschen(chat) }
@@ -818,6 +1026,7 @@ private fun ChatUebersicht(
 @Composable
 private fun ChatZeile(
     chat: Chat,
+    akzentFarbe: Color,
     onClick: () -> Unit,
     onBearbeiten: () -> Unit,
     onLoeschen: () -> Unit
@@ -834,10 +1043,10 @@ private fun ChatZeile(
         Box(
             modifier = Modifier
                 .size(52.dp)
-                .background(MaterialTheme.colorScheme.primary, CircleShape),
+                .background(akzentFarbe, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(chat.kuerzel, color = MaterialTheme.colorScheme.onPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(chat.kuerzel, color = kontrastFarbe(akzentFarbe), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -884,6 +1093,10 @@ private fun ChatZeile(
 @Composable
 private fun ChatAnsicht(
     chat: Chat,
+    akzentFarbe: Color,
+    designName: String,
+    farbeEmpfang: Color,
+    farbeGesendet: Color,
     onZurueck: () -> Unit,
     onNachrichtSenden: (String) -> Unit
 ) {
@@ -907,7 +1120,7 @@ private fun ChatAnsicht(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
-                            modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+                            modifier = Modifier.size(40.dp).background(akzentFarbe, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(chat.kuerzel, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
@@ -921,6 +1134,19 @@ private fun ChatAnsicht(
                 },
                 actions = {
                     if (chat.telefon.isNotBlank()) {
+                        val unbekannt = chat.name == chat.telefon || chat.name.filter { it.isDigit() } == chat.telefon.filter { it.isDigit() }
+                        if (unbekannt) {
+                            TextButton(
+                                onClick = {
+                                    val intent = Intent(ContactsContract.Intents.Insert.ACTION).apply {
+                                        type = ContactsContract.RawContacts.CONTENT_TYPE
+                                        putExtra(ContactsContract.Intents.Insert.PHONE, chat.telefon)
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(intent)
+                                }
+                            ) { Text("Kontakt +") }
+                        }
                         TextButton(
                             onClick = {
                                 val nummer = chat.telefon.filter { it.isDigit() || it == '+' }
@@ -980,7 +1206,7 @@ private fun ChatAnsicht(
                 if (vorher == null || !gleicherTag(vorher.zeitMillis, nachricht.zeitMillis)) {
                     DatumTrenner(nachricht.zeitMillis)
                 }
-                NachrichtenBlase(nachricht)
+                NachrichtenBlase(nachricht, akzentFarbe, designName, farbeEmpfang, farbeGesendet)
             }
         }
     }
@@ -1004,44 +1230,121 @@ private fun DatumTrenner(zeitMillis: Long) {
 }
 
 @Composable
-fun NachrichtenBlase(nachricht: Nachricht) {
+fun NachrichtenBlase(
+    nachricht: Nachricht,
+    akzentFarbe: Color,
+    designName: String,
+    farbeEmpfang: Color,
+    farbeGesendet: Color
+) {
+    val blasenFarbe = if (nachricht.vonMir) farbeGesendet else farbeEmpfang
+    val sprechblase = designName == "Sprechblasen"
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (nachricht.vonMir) Arrangement.End else Arrangement.Start
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(0.82f)
-                .background(
-                    color = if (nachricht.vonMir) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(16.dp)
-                )
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            SelectionContainer {
-                Text(
-                    text = nachricht.text,
-                    fontSize = 16.sp,
-                    lineHeight = 21.sp,
-                    color = MaterialTheme.colorScheme.onSurface
+        if (!sprechblase) {
+            NachrichtenInhalt(
+                nachricht = nachricht,
+                akzentFarbe = akzentFarbe,
+                blasenFarbe = blasenFarbe,
+                modifier = Modifier.fillMaxWidth(0.82f),
+                form = RoundedCornerShape(16.dp)
+            )
+        } else if (!nachricht.vonMir) {
+            // Empfang: kleine, separat gezeichnete Spitze links oben + runde Blase.
+            Row(verticalAlignment = Alignment.Top) {
+                Canvas(
+                    modifier = Modifier
+                        .padding(top = 3.dp)
+                        .width(18.dp)
+                        .height(16.dp)
+                ) {
+                    val p = Path().apply {
+                        moveTo(0f, 0f)
+                        lineTo(size.width, size.height * 0.42f)
+                        lineTo(size.width, size.height)
+                        close()
+                    }
+                    drawPath(p, color = blasenFarbe)
+                }
+                NachrichtenInhalt(
+                    nachricht = nachricht,
+                    akzentFarbe = akzentFarbe,
+                    blasenFarbe = blasenFarbe,
+                    modifier = Modifier.fillMaxWidth(0.78f),
+                    form = RoundedCornerShape(22.dp)
                 )
             }
-            Spacer(Modifier.height(3.dp))
-            Row(modifier = Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nachricht.zeitMillis)),
-                    fontSize = 11.sp,
-                    color = Color.Gray
+        } else {
+            // Gesendet: runde Blase + kleine, separat gezeichnete Spitze rechts unten.
+            Row(verticalAlignment = Alignment.Bottom) {
+                NachrichtenInhalt(
+                    nachricht = nachricht,
+                    akzentFarbe = akzentFarbe,
+                    blasenFarbe = blasenFarbe,
+                    modifier = Modifier.fillMaxWidth(0.78f),
+                    form = RoundedCornerShape(22.dp)
                 )
-                if (nachricht.vonMir) {
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = if (nachricht.status >= 2) "✓✓" else "✓",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
+                Canvas(
+                    modifier = Modifier
+                        .padding(bottom = 3.dp)
+                        .width(18.dp)
+                        .height(16.dp)
+                ) {
+                    val p = Path().apply {
+                        moveTo(0f, 0f)
+                        lineTo(0f, size.height * 0.58f)
+                        lineTo(size.width, size.height)
+                        close()
+                    }
+                    drawPath(p, color = blasenFarbe)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NachrichtenInhalt(
+    nachricht: Nachricht,
+    akzentFarbe: Color,
+    blasenFarbe: Color,
+    modifier: Modifier,
+    form: androidx.compose.ui.graphics.Shape
+) {
+    Column(
+        modifier = modifier
+            .background(blasenFarbe, form)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        SelectionContainer {
+            Text(
+                nachricht.text,
+                fontSize = 16.sp,
+                lineHeight = 21.sp,
+                color = kontrastFarbe(blasenFarbe)
+            )
+        }
+        Spacer(Modifier.height(3.dp))
+        Row(
+            modifier = Modifier.align(Alignment.End),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nachricht.zeitMillis)),
+                fontSize = 11.sp,
+                color = sekundaerTextFarbe(blasenFarbe)
+            )
+            if (nachricht.vonMir) {
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    if (nachricht.status >= 2) "✓✓" else "✓",
+                    fontSize = 12.sp,
+                    color = kontrastFarbe(blasenFarbe),
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
