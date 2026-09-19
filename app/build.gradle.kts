@@ -6,7 +6,7 @@ plugins {
 android {
     namespace = "at.leosnet.leosmessenger"
     compileSdk {
-        version = release(36) {
+        version = release(37) {
             minorApiLevel = 1
         }
     }
