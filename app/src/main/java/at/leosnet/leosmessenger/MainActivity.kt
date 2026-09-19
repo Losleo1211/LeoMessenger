@@ -7,6 +7,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.app.role.RoleManager
 import android.app.Service
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import androidx.core.app.NotificationCompat
 import android.os.IBinder
 import android.os.Build
 import android.provider.Settings
@@ -73,14 +77,27 @@ data class Chat(
 )
 
 class MainActivity : ComponentActivity() {
+    private var eingehenderSmsIntent by mutableStateOf<Intent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        eingehenderSmsIntent = intent
         enableEdgeToEdge()
         setContent {
             LeosMessengerTheme {
-                MessengerApp(applicationContext)
+                MessengerApp(
+                    context = applicationContext,
+                    smsIntent = eingehenderSmsIntent,
+                    onSmsIntentVerarbeitet = { eingehenderSmsIntent = null }
+                )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        eingehenderSmsIntent = intent
     }
 }
 
@@ -132,6 +149,7 @@ class SmsReceiver : BroadcastReceiver() {
             )
         }
         speichereChats(context, chats)
+        zeigeSmsBenachrichtigung(context, absender, text)
     }
 }
 
@@ -143,6 +161,70 @@ private const val PREFS_FARBE_EMPFANG = "farbe_empfang"
 private const val PREFS_FARBE_GESENDET = "farbe_gesendet"
 private const val PREFS_FARBE_UEBERSICHT = "farbe_uebersicht"
 private const val PREFS_DESIGN = "einstellung_design"
+private const val PREFS_NOTIFY = "notify_enabled"
+private const val PREFS_NOTIFY_POPUP = "notify_popup"
+private const val PREFS_NOTIFY_SOUND = "notify_sound"
+private const val PREFS_NOTIFY_VIBRATE = "notify_vibrate"
+private const val PREFS_NOTIFY_PREVIEW = "notify_preview"
+private const val PREFS_ACTIVE_PHONE = "active_phone"
+private const val PREFS_UNREAD = "unread_total"
+
+private fun notifyBool(context: Context, key: String, standard: Boolean = true): Boolean =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(key, standard)
+
+private fun setNotifyBool(context: Context, key: String, value: Boolean) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(key, value).apply()
+}
+
+private fun zeigeSmsBenachrichtigung(context: Context, nummer: String, text: String) {
+    if (!notifyBool(context, PREFS_NOTIFY)) return
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    if (gleicheTelefonnummer(prefs.getString(PREFS_ACTIVE_PHONE, "").orEmpty(), nummer)) return
+    if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+
+    val popup = notifyBool(context, PREFS_NOTIFY_POPUP)
+    val sound = notifyBool(context, PREFS_NOTIFY_SOUND)
+    val vibrate = notifyBool(context, PREFS_NOTIFY_VIBRATE)
+    val preview = notifyBool(context, PREFS_NOTIFY_PREVIEW)
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    val channelId = "sms_${if (popup) "high" else "normal"}_${if (sound) "s" else "silent"}_${if (vibrate) "v" else "nov"}"
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val importance = if (popup) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_DEFAULT
+        val channel = NotificationChannel(channelId, "Neue SMS", importance).apply {
+            description = "Benachrichtigungen für neue SMS"
+            enableVibration(vibrate)
+            if (!sound) setSound(null, null)
+            setShowBadge(true)
+        }
+        manager.createNotificationChannel(channel)
+    }
+    val unread = prefs.getInt(PREFS_UNREAD, 0) + 1
+    prefs.edit().putInt(PREFS_UNREAD, unread).apply()
+    val openIntent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${Uri.encode(nummer)}"), context, MainActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+    }
+    val pending = PendingIntent.getActivity(context, normalisiereTelefonnummer(nummer).hashCode(), openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val name = findeKontaktName(context, nummer) ?: nummer
+    val notification = NotificationCompat.Builder(context, channelId)
+        .setSmallIcon(android.R.drawable.sym_action_chat)
+        .setContentTitle(name)
+        .setContentText(if (preview) text else "Neue Nachricht")
+        .setStyle(if (preview) NotificationCompat.BigTextStyle().bigText(text) else null)
+        .setContentIntent(pending)
+        .setAutoCancel(true)
+        .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+        .setPriority(if (popup) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+        .setNumber(unread)
+        .build()
+    manager.notify(normalisiereTelefonnummer(nummer).hashCode(), notification)
+}
+
+private fun chatAlsGelesen(context: Context, telefon: String) {
+    if (telefon.isBlank()) return
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    manager.cancel(normalisiereTelefonnummer(telefon).hashCode())
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(PREFS_UNREAD, 0).apply()
+}
 
 private fun ladeFarbe(context: Context): String =
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREFS_FARBE, "Blau") ?: "Blau"
@@ -442,7 +524,7 @@ private fun speichereGesendeteSmsImSystem(context: Context, telefon: String, tex
 }
 
 @Composable
-fun MessengerApp(context: Context) {
+fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbeitet: () -> Unit = {}) {
     var standardSms by remember { mutableStateOf(istStandardSmsApp(context)) }
     val chats = remember { mutableStateListOf<Chat>().apply { addAll(ladeChats(context)) } }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -487,6 +569,7 @@ fun MessengerApp(context: Context) {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_SMS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_MMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_MMS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_WAP_PUSH) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_WAP_PUSH)
+                if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
             }
             if (fehlen.isNotEmpty()) {
                 berechtigungsLauncher.launch(fehlen.toTypedArray())
@@ -509,6 +592,7 @@ fun MessengerApp(context: Context) {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_SMS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_MMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_MMS)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_WAP_PUSH) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_WAP_PUSH)
+                if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
             }
             if (fehlen.isNotEmpty()) {
                 berechtigungsLauncher.launch(fehlen.toTypedArray())
@@ -547,7 +631,48 @@ fun MessengerApp(context: Context) {
     var designName by remember { mutableStateOf(ladeDesign(context)) }
     val akzentFarbe = farbeAuswahl(farbeUebersicht)
 
+    // V1.1.7: Aufrufe aus Kontakte/Telefon mit sms: oder smsto: direkt in den passenden Chat leiten.
+    LaunchedEffect(smsIntent) {
+        val intent = smsIntent
+        if (intent != null && intent.action == Intent.ACTION_SENDTO) {
+            val data = intent.data
+            val scheme = data?.scheme?.lowercase(Locale.getDefault())
+            if (scheme == "sms" || scheme == "smsto" || scheme == "mms" || scheme == "mmsto") {
+                val rohNummer = data?.schemeSpecificPart.orEmpty().substringBefore("?")
+                val nummer = Uri.decode(rohNummer).trim()
+                if (nummer.isNotBlank()) {
+                    var index = chats.indexOfFirst { gleicheTelefonnummer(it.telefon, nummer) }
+                    if (index < 0) {
+                        val kontaktName = findeKontaktName(context, nummer) ?: nummer
+                        val neuerChat = Chat(
+                            id = System.currentTimeMillis(),
+                            name = kontaktName,
+                            kuerzel = kuerzelAusName(kontaktName),
+                            nachrichten = emptyList(),
+                            telefon = nummer
+                        )
+                        chats.add(0, neuerChat)
+                        speichereChats(context, chats)
+                        index = 0
+                    }
+                    offenerChatId = chats[index].id
+                }
+            }
+            onSmsIntentVerarbeitet()
+        }
+    }
+
     val offenerChat = chats.firstOrNull { it.id == offenerChatId }
+
+    DisposableEffect(offenerChat?.telefon) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val telefon = offenerChat?.telefon.orEmpty()
+        prefs.edit().putString(PREFS_ACTIVE_PHONE, telefon).apply()
+        if (telefon.isNotBlank()) chatAlsGelesen(context, telefon)
+        onDispose {
+            if (prefs.getString(PREFS_ACTIVE_PHONE, "") == telefon) prefs.edit().putString(PREFS_ACTIVE_PHONE, "").apply()
+        }
+    }
 
     if (offenerChat == null) {
         ChatUebersicht(
@@ -657,8 +782,13 @@ fun MessengerApp(context: Context) {
             aktuelleFarbeGesendet = farbeGesendet,
             aktuelleFarbeUebersicht = farbeUebersicht,
             aktuellesDesign = designName,
+            notifyEnabledStart = notifyBool(context, PREFS_NOTIFY),
+            notifyPopupStart = notifyBool(context, PREFS_NOTIFY_POPUP),
+            notifySoundStart = notifyBool(context, PREFS_NOTIFY_SOUND),
+            notifyVibrateStart = notifyBool(context, PREFS_NOTIFY_VIBRATE),
+            notifyPreviewStart = notifyBool(context, PREFS_NOTIFY_PREVIEW),
             onAbbrechen = { einstellungenOffen = false },
-            onSpeichern = { empfang, gesendet, uebersicht, design ->
+            onSpeichern = { empfang, gesendet, uebersicht, design, nEnabled, nPopup, nSound, nVibrate, nPreview ->
                 farbeEmpfang = empfang
                 farbeGesendet = gesendet
                 farbeUebersicht = uebersicht
@@ -669,6 +799,11 @@ fun MessengerApp(context: Context) {
                 speichereEinzelFarbe(context, PREFS_FARBE_UEBERSICHT, uebersicht)
                 speichereFarbe(context, uebersicht)
                 speichereDesign(context, design)
+                setNotifyBool(context, PREFS_NOTIFY, nEnabled)
+                setNotifyBool(context, PREFS_NOTIFY_POPUP, nPopup)
+                setNotifyBool(context, PREFS_NOTIFY_SOUND, nSound)
+                setNotifyBool(context, PREFS_NOTIFY_VIBRATE, nVibrate)
+                setNotifyBool(context, PREFS_NOTIFY_PREVIEW, nPreview)
                 einstellungenOffen = false
             }
         )
@@ -693,6 +828,22 @@ fun MessengerApp(context: Context) {
             }
         )
     }
+}
+
+private fun findeKontaktName(context: Context, nummer: String): String? {
+    return try {
+        val uri = Uri.withAppendedPath(
+            ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+            Uri.encode(nummer)
+        )
+        context.contentResolver.query(
+            uri,
+            arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+            null, null, null
+        )?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    } catch (_: Exception) { null }
 }
 
 private fun normalisiereTelefonnummer(nummer: String): String =
@@ -825,8 +976,13 @@ private fun EinstellungenDialog(
     aktuelleFarbeGesendet: String,
     aktuelleFarbeUebersicht: String,
     aktuellesDesign: String,
+    notifyEnabledStart: Boolean,
+    notifyPopupStart: Boolean,
+    notifySoundStart: Boolean,
+    notifyVibrateStart: Boolean,
+    notifyPreviewStart: Boolean,
     onAbbrechen: () -> Unit,
-    onSpeichern: (String, String, String, String) -> Unit
+    onSpeichern: (String, String, String, String, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     val farben = listOf(
         "Weiß", "Hellgrau", "Grau", "Dunkelgrau",
@@ -838,6 +994,11 @@ private fun EinstellungenDialog(
     var gesendet by remember(aktuelleFarbeGesendet) { mutableStateOf(aktuelleFarbeGesendet) }
     var uebersicht by remember(aktuelleFarbeUebersicht) { mutableStateOf(aktuelleFarbeUebersicht) }
     var design by remember(aktuellesDesign) { mutableStateOf(aktuellesDesign) }
+    var nEnabled by remember { mutableStateOf(notifyEnabledStart) }
+    var nPopup by remember { mutableStateOf(notifyPopupStart) }
+    var nSound by remember { mutableStateOf(notifySoundStart) }
+    var nVibrate by remember { mutableStateOf(notifyVibrateStart) }
+    var nPreview by remember { mutableStateOf(notifyPreviewStart) }
 
     @Composable fun Farbreihe(titel: String, wert: String, setzen: (String) -> Unit) {
         Text(titel, fontWeight = FontWeight.SemiBold)
@@ -871,9 +1032,22 @@ private fun EinstellungenDialog(
                         Text(eintrag)
                     }
                 }
+                HorizontalDivider()
+                Text("Benachrichtigungen", fontWeight = FontWeight.Bold)
+                @Composable fun Schalter(text: String, checked: Boolean, enabled: Boolean = true, change: (Boolean) -> Unit) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(text, modifier = Modifier.weight(1f))
+                        Switch(checked = checked, onCheckedChange = change, enabled = enabled)
+                    }
+                }
+                Schalter("Benachrichtigungen", nEnabled) { nEnabled = it }
+                Schalter("Pop-up / Heads-up", nPopup, nEnabled) { nPopup = it }
+                Schalter("Ton", nSound, nEnabled) { nSound = it }
+                Schalter("Vibration", nVibrate, nEnabled) { nVibrate = it }
+                Schalter("Nachrichtenvorschau", nPreview, nEnabled) { nPreview = it }
             }
         },
-        confirmButton = { TextButton(onClick = { onSpeichern(empfang, gesendet, uebersicht, design) }) { Text("Speichern") } },
+        confirmButton = { TextButton(onClick = { onSpeichern(empfang, gesendet, uebersicht, design, nEnabled, nPopup, nSound, nVibrate, nPreview) }) { Text("Speichern") } },
         dismissButton = { TextButton(onClick = onAbbrechen) { Text("Abbrechen") } }
     )
 }
@@ -1257,9 +1431,10 @@ fun NachrichtenBlase(
             Row(verticalAlignment = Alignment.Top) {
                 Canvas(
                     modifier = Modifier
-                        .padding(top = 3.dp)
-                        .width(18.dp)
-                        .height(16.dp)
+                        .padding(top = 2.dp)
+                        .width(23.dp)
+                        .height(19.dp)
+                        .offset(x = 4.dp)
                 ) {
                     val p = Path().apply {
                         moveTo(0f, 0f)
@@ -1289,9 +1464,10 @@ fun NachrichtenBlase(
                 )
                 Canvas(
                     modifier = Modifier
-                        .padding(bottom = 3.dp)
-                        .width(18.dp)
-                        .height(16.dp)
+                        .padding(bottom = 2.dp)
+                        .width(23.dp)
+                        .height(19.dp)
+                        .offset(x = (-4).dp)
                 ) {
                     val p = Path().apply {
                         moveTo(0f, 0f)
