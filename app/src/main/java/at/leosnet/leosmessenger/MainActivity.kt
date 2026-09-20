@@ -35,6 +35,9 @@ import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -47,7 +50,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -56,6 +58,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
@@ -141,7 +145,7 @@ class SmsReceiver : BroadcastReceiver() {
 
         val chats = ladeChats(context).toMutableList()
 
-        // V1.4.4: Liegt der Chat dieses Absenders im Papierkorb, wird er bei
+        // V1.6.1: Liegt der Chat dieses Absenders im Papierkorb, wird er bei
         // einer neuen SMS automatisch vollständig wiederhergestellt.
         val papierkorb = ladePapierkorb(context).toMutableList()
         val papierkorbIndex = papierkorb.indexOfFirst { gleicheTelefonnummer(it.telefon, absender) }
@@ -710,6 +714,11 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // V1.6.1: Diese Zustände müssen VOR dem SMS-Receiver deklariert sein,
+    // weil der Receiver sie beim Eingang einer Nachricht verwendet.
+    var offenerChatId by remember { mutableStateOf<Long?>(null) }
+    var empfangsAnimationId by remember { mutableLongStateOf(Long.MIN_VALUE) }
+
     // V1.2.0: Eingehende SMS sofort in die Compose-Oberfläche übernehmen,
     // auch wenn Leo`s Messenger bereits im Vordergrund geöffnet ist.
     DisposableEffect(Unit) {
@@ -717,8 +726,45 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent?.action == ACTION_SMS_CHANGED) {
                     val aktuell = ladeChats(context)
-                    chats.clear()
-                    chats.addAll(aktuell)
+
+                    // V1.6.1: Eingehende SMS nicht mehr durch clear()+addAll()
+                    // übernehmen. Das hat den geöffneten Chat teilweise neu
+                    // aufgebaut und damit den Animationszustand zurückgesetzt.
+                    // Bestehende Chats werden gezielt aktualisiert.
+                    val neueIds = aktuell.map { it.id }.toSet()
+                    for (neu in aktuell) {
+                        val index = chats.indexOfFirst { alt ->
+                            alt.id == neu.id ||
+                            (alt.telefon.isNotBlank() && gleicheTelefonnummer(alt.telefon, neu.telefon))
+                        }
+                        if (index >= 0) {
+                            chats[index] = neu
+                        } else {
+                            chats.add(neu)
+                        }
+                    }
+                    chats.removeAll { alt ->
+                        alt.id !in neueIds &&
+                        aktuell.none { neu ->
+                            alt.telefon.isNotBlank() && gleicheTelefonnummer(alt.telefon, neu.telefon)
+                        }
+                    }
+
+                    // Die zuletzt empfangene Nachricht ausdrücklich an ChatAnsicht melden.
+                    val offen = offenerChatId
+                    val aktualisierterOffenerChat = aktuell.firstOrNull { it.id == offen }
+                        ?: aktuell.firstOrNull { neu ->
+                            val bisher = chats.firstOrNull { it.id == offen }
+                            bisher != null &&
+                            bisher.telefon.isNotBlank() &&
+                            gleicheTelefonnummer(bisher.telefon, neu.telefon)
+                        }
+                    val empfangen = aktualisierterOffenerChat
+                        ?.nachrichten
+                        ?.lastOrNull { !it.vonMir }
+                    if (empfangen != null) {
+                        empfangsAnimationId = empfangen.id
+                    }
                 }
             }
         }
@@ -804,13 +850,13 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             if (intent != null) standardSmsLauncher.launch(intent)
         }
     }
-    var offenerChatId by remember { mutableStateOf<Long?>(null) }
     var neuerChatDialog by remember { mutableStateOf(false) }
     var bearbeitenChat by remember { mutableStateOf<Chat?>(null) }
     var loeschenChat by remember { mutableStateOf<Chat?>(null) }
     var einstellungenOffen by remember { mutableStateOf(false) }
     var hilfeOffen by remember { mutableStateOf(false) }
     var papierkorbOffen by remember { mutableStateOf(false) }
+
     val papierkorb = remember { mutableStateListOf<Chat>().apply { addAll(ladePapierkorb(context)) } }
     var schriftgroesse by remember { mutableIntStateOf(ladeSchriftgroesse(context)) }
     var farbName by remember { mutableStateOf(ladeFarbe(context)) }
@@ -903,6 +949,7 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             farbeEmpfang = farbeAuswahl(farbeEmpfang),
             farbeGesendet = farbeAuswahl(farbeGesendet),
             schriftgroesse = schriftgroesse,
+            empfangsAnimationId = empfangsAnimationId,
             onZurueck = { offenerChatId = null },
             onNachrichtLoeschen = { nachricht ->
                 val index = chats.indexOfFirst { it.id == offenerChat.id }
@@ -1374,6 +1421,7 @@ private fun ChatUebersicht(
     var sortiermenuOffen by remember { mutableStateOf(false) }
     var sortierung by remember { mutableStateOf(ladeSortierung(context)) }
     var infoOffen by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val q = suche.trim()
     val basisChats = chats.toList()
     val gefilterteBasis = if (q.isBlank()) basisChats else basisChats.filter { chat ->
@@ -1392,7 +1440,7 @@ private fun ChatUebersicht(
         val anzahlNachrichten = chats.sumOf { it.nachrichten.size }
         AlertDialog(
             onDismissRequest = { infoOffen = false },
-            title = { Text("Leo`s Messenger V1.4.4") },
+            title = { Text("Leo`s Messenger V1.6.1") },
             text = {
                 Text(
                     "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
@@ -1496,7 +1544,7 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Info zu V1.4.4") },
+                                text = { Text("Info zu V1.6.1") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     infoOffen = true
@@ -1551,17 +1599,56 @@ private fun ChatUebersicht(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = 2.dp, bottom = 88.dp)
                 ) {
-                    items(gefilterteChats.size, key = { index -> "chat_${gefilterteChats[index].id}_${index}" }) { index ->
+                    items(
+                        gefilterteChats.size,
+                        key = { index ->
+                            val c = gefilterteChats[index]
+                            // V1.6.1: index is deliberately included as a final
+                            // uniqueness guard. Some legacy/imported chats can have
+                            // the same id and an empty phone number.
+                            "chat_${c.id}_${normalisiereTelefonnummer(c.telefon)}_${index}"
+                        }
+                    ) { index ->
                         val chat = gefilterteChats[index]
-                        ChatZeile(
-                            chat = chat,
-                            akzentFarbe = akzentFarbe,
-                            ungelesen = chatIstUngelesen(context, chat.telefon),
-                            onClick = { onChatClick(chat) },
-                            onBearbeiten = { onBearbeiten(chat) },
-                            onLoeschen = { onLoeschen(chat) }
+                        var letzteY by remember(chat.id) { mutableFloatStateOf(Float.NaN) }
+                        var verschiebungY by remember(chat.id) { mutableFloatStateOf(0f) }
+                        val animierteVerschiebungY by animateFloatAsState(
+                            targetValue = verschiebungY,
+                            animationSpec = tween(
+                                durationMillis = 480,
+                                easing = androidx.compose.animation.core.FastOutSlowInEasing
+                            ),
+                            label = "chatSortierVerschiebung"
                         )
-                        HorizontalDivider(modifier = Modifier.padding(start = 78.dp))
+
+                        Column(
+                            modifier = Modifier
+                                .graphicsLayer { translationY = animierteVerschiebungY }
+                                .onGloballyPositioned { coords ->
+                                    val neuY = coords.positionInRoot().y
+                                    if (!letzteY.isNaN()) {
+                                        val delta = letzteY - neuY
+                                        if (kotlin.math.abs(delta) > 1f) {
+                                            verschiebungY = delta
+                                            scope.launch {
+                                                kotlinx.coroutines.delay(16)
+                                                verschiebungY = 0f
+                                            }
+                                        }
+                                    }
+                                    letzteY = neuY
+                                }
+                        ) {
+                            ChatZeile(
+                                chat = chat,
+                                akzentFarbe = akzentFarbe,
+                                ungelesen = chatIstUngelesen(context, chat.telefon),
+                                onClick = { onChatClick(chat) },
+                                onBearbeiten = { onBearbeiten(chat) },
+                                onLoeschen = { onLoeschen(chat) }
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(start = 78.dp))
+                        }
                     }
                 }
             }
@@ -1581,6 +1668,7 @@ private fun ChatZeile(
     var menuOffen by remember { mutableStateOf(false) }
     var swipeX by remember(chat.id) { mutableFloatStateOf(0f) }
     var wirdGeloescht by remember(chat.id) { mutableStateOf(false) }
+    var zeileSichtbar by remember(chat.id) { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     val loeschOffset by animateFloatAsState(
         targetValue = if (wirdGeloescht) 900f else 0f,
@@ -1613,12 +1701,24 @@ private fun ChatZeile(
         if (wirdGeloescht) return
         wirdGeloescht = true
         scope.launch {
+            // 1. Chat fliegt wie bisher nach rechts weg.
             kotlinx.coroutines.delay(520)
+            // 2. Danach wird sein Platz weich auf 0 zusammengezogen.
+            zeileSichtbar = false
+            kotlinx.coroutines.delay(380)
+            // 3. Erst jetzt tatsächlich in den Papierkorb verschieben.
             onLoeschen()
         }
     }
 
-    Box(modifier = Modifier.fillMaxWidth()) {
+    AnimatedVisibility(
+        visible = zeileSichtbar,
+        exit = shrinkVertically(
+            animationSpec = tween(380),
+            shrinkTowards = Alignment.Top
+        ) + fadeOut(animationSpec = tween(220))
+    ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
         if (swipeX > 18f) {
             Row(
                 modifier = Modifier
@@ -1723,6 +1823,7 @@ private fun ChatZeile(
             }
         }
     }
+    }
 }
 
 }
@@ -1736,6 +1837,7 @@ private fun ChatAnsicht(
     farbeEmpfang: Color,
     farbeGesendet: Color,
     schriftgroesse: Int,
+    empfangsAnimationId: Long,
     onZurueck: () -> Unit,
     onNachrichtLoeschen: (Nachricht) -> Unit,
     onNachrichtSenden: (String) -> Unit
@@ -1746,6 +1848,11 @@ private fun ChatAnsicht(
     val scope = rememberCoroutineScope()
     var overlayNachricht by remember(chat.id) { mutableStateOf<Nachricht?>(null) }
     var overlaySichtbar by remember(chat.id) { mutableStateOf(false) }
+
+    // V1.6.1: tatsächliche Y-Position der neuen Nachricht im Chat messen.
+    // Kein Raten mehr mit "oben" oder "unten".
+    var chatBereichY by remember(chat.id) { mutableFloatStateOf(0f) }
+    var zielNachrichtY by remember(chat.id) { mutableFloatStateOf(Float.NaN) }
     var letzteBekannteNachrichtId by remember(chat.id) {
         mutableLongStateOf(chat.nachrichten.lastOrNull()?.id ?: Long.MIN_VALUE)
     }
@@ -1754,36 +1861,43 @@ private fun ChatAnsicht(
         mutableLongStateOf(chat.nachrichten.lastOrNull()?.id ?: Long.MIN_VALUE)
     }
 
-    // V1.4.4: Neue Nachricht schon in derselben Compose-Phase als "fliegend"
+    // V1.6.1: Neue Nachricht schon in derselben Compose-Phase als "fliegend"
     // erkennen. Dadurch wird das echte Listenelement sofort unsichtbar und
     // kann nicht mehr für einen Frame unten aufblitzen.
     val aktuelleLetzte = chat.nachrichten.lastOrNull()
+    val empfangExplizitNeu =
+        aktuelleLetzte != null &&
+        !aktuelleLetzte.vonMir &&
+        aktuelleLetzte.id == empfangsAnimationId &&
+        aktuelleLetzte.id != letzteAnimierteNachricht
+
     val wartetAufEinflug =
         aktuelleLetzte != null &&
-        letzteBekannteNachrichtId != Long.MIN_VALUE &&
-        aktuelleLetzte.id != letzteBekannteNachrichtId
+        (
+            empfangExplizitNeu ||
+            (
+                letzteBekannteNachrichtId != Long.MIN_VALUE &&
+                aktuelleLetzte.id != letzteBekannteNachrichtId
+            )
+        )
 
     LaunchedEffect(chat.id, aktuelleLetzte?.id) {
         val letzte = aktuelleLetzte ?: return@LaunchedEffect
         if (wartetAufEinflug) {
+            zielNachrichtY = Float.NaN
             overlayNachricht = letzte
             overlaySichtbar = true
 
-            // V1.4.4: Kein animateScrollToItem mehr während des Einflugs.
-            // Stattdessen wird die Liste über fast die gesamte Flugzeit kontrolliert
-            // und weich um ungefähr eine Nachrichtenhöhe nach oben geschoben.
-            scope.launch {
-                kotlinx.coroutines.delay(40)
-                listState.animateScrollBy(
-                    value = 96f,
-                    animationSpec = tween(
-                        durationMillis = 500,
-                        easing = androidx.compose.animation.core.FastOutSlowInEasing
-                    )
-                )
+            // V1.6.1: Bei Empfang vorhandenen Verlauf während des Einflugs
+            // sichtbar weich nach oben schieben.
+            if (!letzte.vonMir && chat.nachrichten.size > 1) {
+                scope.launch {
+                    kotlinx.coroutines.delay(60)
+                    listState.animateScrollToItem(chat.nachrichten.lastIndex)
+                }
             }
 
-            kotlinx.coroutines.delay(560)
+            kotlinx.coroutines.delay(650)
             overlaySichtbar = false
             overlayNachricht = null
             letzteBekannteNachrichtId = letzte.id
@@ -1880,7 +1994,14 @@ private fun ChatAnsicht(
             }
         }
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .onGloballyPositioned { coords ->
+                    chatBereichY = coords.positionInRoot().y
+                }
+        ) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -1893,12 +2014,22 @@ private fun ChatAnsicht(
                     val nachricht = chat.nachrichten[pos]
                     val vorher = if (pos > 0) chat.nachrichten[pos - 1] else null
                     Column(
-                        modifier = Modifier.fillMaxWidth().graphicsLayer {
-                            alpha = if (
-                                (overlaySichtbar && overlayNachricht?.id == nachricht.id) ||
-                                (wartetAufEinflug && aktuelleLetzte?.id == nachricht.id)
-                            ) 0f else 1f
-                        }
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coords ->
+                                if (
+                                    (overlaySichtbar && overlayNachricht?.id == nachricht.id) ||
+                                    (wartetAufEinflug && aktuelleLetzte?.id == nachricht.id)
+                                ) {
+                                    zielNachrichtY = coords.positionInRoot().y - chatBereichY
+                                }
+                            }
+                            .graphicsLayer {
+                                alpha = if (
+                                    (overlaySichtbar && overlayNachricht?.id == nachricht.id) ||
+                                    (wartetAufEinflug && aktuelleLetzte?.id == nachricht.id)
+                                ) 0f else 1f
+                            }
                     ) {
                         if (vorher == null || !gleicherTag(vorher.zeitMillis, nachricht.zeitMillis)) DatumTrenner(nachricht.zeitMillis)
                         NachrichtenBlase(
@@ -1912,22 +2043,39 @@ private fun ChatAnsicht(
             }
 
             val fliegend = overlayNachricht
-            if (overlaySichtbar && fliegend != null) {
+            if (overlaySichtbar && fliegend != null && !zielNachrichtY.isNaN()) {
                 var gestartet by remember(fliegend.id) { mutableStateOf(false) }
                 val x by animateDpAsState(
                     targetValue = if (gestartet) 0.dp else if (fliegend.vonMir) (-150).dp else 150.dp,
-                    animationSpec = tween(500), label = "overlayX"
+                    animationSpec = tween(520), label = "overlayX"
                 )
-                val y by animateDpAsState(
+                val yEinflug by animateDpAsState(
                     targetValue = if (gestartet) 0.dp else (-300).dp,
-                    animationSpec = tween(500), label = "overlayY"
+                    animationSpec = tween(
+                        durationMillis = 650,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                    ),
+                    label = "overlayY"
                 )
                 LaunchedEffect(fliegend.id) { gestartet = true }
+
+                // Die Blase wird direkt über die unsichtbare echte Nachricht gelegt.
+                // yEinflug ist nur noch der animierte Abstand von oben zu GENAU
+                // dieser gemessenen Zielposition.
                 Box(
-                    modifier = Modifier.fillMaxSize().zIndex(100f).padding(horizontal = 10.dp, vertical = 10.dp),
-                    contentAlignment = Alignment.BottomCenter
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(100f)
                 ) {
-                    Box(modifier = Modifier.fillMaxWidth().offset(x = x, y = y)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp)
+                            .offset(
+                                x = x,
+                                y = (zielNachrichtY / androidx.compose.ui.platform.LocalDensity.current.density).dp + yEinflug
+                            )
+                    ) {
                         NachrichtenBlase(
                             fliegend, akzentFarbe, designName, farbeEmpfang, farbeGesendet,
                             schriftgroesse = schriftgroesse,
@@ -1983,7 +2131,7 @@ fun NachrichtenBlase(
         animationSpec = tween(320),
         label = "nachrichtScale"
     )
-    // V1.4.4: Empfang kommt deutlich von rechts oben, gesendet von links oben.
+    // V1.6.1: Empfang kommt deutlich von rechts oben, gesendet von links oben.
     val startX = if (nachricht.vonMir) (-110).dp else 110.dp
     val einflugX by animateDpAsState(
         targetValue = if (!einflugAnimation || sichtbar) 0.dp else startX,
