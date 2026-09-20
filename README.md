@@ -12,7 +12,7 @@ Leo's Messenger wird unabhängig entwickelt und der Quellcode ist öffentlich ei
 
 ## 📱 Aktuelle Version
 
-**V1.4.4**
+**V1.6.1**
 
 Leo's Messenger wird laufend weiterentwickelt und auf realen Android-Geräten getestet.
 
