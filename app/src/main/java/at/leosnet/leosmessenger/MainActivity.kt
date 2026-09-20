@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.app.role.RoleManager
 import android.app.Service
@@ -31,13 +32,22 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -45,8 +55,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -115,7 +128,9 @@ class MmsReceiver : BroadcastReceiver() {
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION && intent.action != Telephony.Sms.Intents.SMS_DELIVER_ACTION) return
+        val pendingResult = goAsync()
 
+        try {
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isEmpty()) return
 
@@ -125,7 +140,54 @@ class SmsReceiver : BroadcastReceiver() {
         if (absender.isBlank() || text.isBlank()) return
 
         val chats = ladeChats(context).toMutableList()
+
+        // V1.4.4: Liegt der Chat dieses Absenders im Papierkorb, wird er bei
+        // einer neuen SMS automatisch vollständig wiederhergestellt.
+        val papierkorb = ladePapierkorb(context).toMutableList()
+        val papierkorbIndex = papierkorb.indexOfFirst { gleicheTelefonnummer(it.telefon, absender) }
+        if (papierkorbIndex >= 0) {
+            val alterChat = papierkorb.removeAt(papierkorbIndex)
+            val vorhandenerIndex = chats.indexOfFirst { gleicheTelefonnummer(it.telefon, absender) }
+            if (vorhandenerIndex >= 0) {
+                val aktiv = chats[vorhandenerIndex]
+                val zusammen = (alterChat.nachrichten + aktiv.nachrichten)
+                    .distinctBy { n -> "${n.vonMir}|${n.zeitMillis}|${n.text}" }
+                    .sortedBy { it.zeitMillis }
+                val kontakt = findeKontaktName(context, absender)
+                val name = kontakt ?: if (aktiv.name != aktiv.telefon) aktiv.name else alterChat.name
+                chats[vorhandenerIndex] = aktiv.copy(
+                    name = name,
+                    kuerzel = kuerzelAusName(name),
+                    nachrichten = zusammen
+                )
+            } else {
+                val kontakt = findeKontaktName(context, absender)
+                chats.add(
+                    0,
+                    alterChat.copy(
+                        name = kontakt ?: alterChat.name,
+                        kuerzel = kuerzelAusName(kontakt ?: alterChat.name),
+                        telefon = absender
+                    )
+                )
+            }
+            speicherePapierkorb(context, papierkorb)
+        }
+
         val index = chats.indexOfFirst { gleicheTelefonnummer(it.telefon, absender) }
+
+        // Schutz gegen doppelte System-Broadcasts: dieselbe eingehende SMS
+        // darf nur einmal in den Chat übernommen werden.
+        val bereitsVorhanden = chats.any { chat ->
+            gleicheTelefonnummer(chat.telefon, absender) &&
+                chat.nachrichten.any { n ->
+                    !n.vonMir &&
+                    n.text == text &&
+                    kotlin.math.abs(n.zeitMillis - zeit) < 5000L
+                }
+        }
+        if (bereitsVorhanden) return
+
         val neu = Nachricht(
             id = System.currentTimeMillis(),
             text = text,
@@ -135,21 +197,31 @@ class SmsReceiver : BroadcastReceiver() {
         )
 
         if (index >= 0) {
-            chats[index] = chats[index].copy(nachrichten = chats[index].nachrichten + neu)
+            val kontakt = findeKontaktName(context, absender)
+            chats[index] = chats[index].copy(
+                name = kontakt ?: chats[index].name,
+                kuerzel = kuerzelAusName(kontakt ?: chats[index].name),
+                nachrichten = chats[index].nachrichten + neu
+            )
         } else {
             chats.add(
                 0,
                 Chat(
                     id = System.currentTimeMillis(),
-                    name = absender,
-                    kuerzel = kuerzelAusName(absender),
+                    name = findeKontaktName(context, absender) ?: absender,
+                    kuerzel = kuerzelAusName(findeKontaktName(context, absender) ?: absender),
                     nachrichten = listOf(neu),
                     telefon = absender
                 )
             )
         }
         speichereChats(context, chats)
+        markiereUngelesen(context, absender)
+        context.sendBroadcast(Intent(ACTION_SMS_CHANGED).setPackage(context.packageName))
         zeigeSmsBenachrichtigung(context, absender, text)
+        } finally {
+            pendingResult.finish()
+        }
     }
 }
 
@@ -161,6 +233,25 @@ private const val PREFS_FARBE_EMPFANG = "farbe_empfang"
 private const val PREFS_FARBE_GESENDET = "farbe_gesendet"
 private const val PREFS_FARBE_UEBERSICHT = "farbe_uebersicht"
 private const val PREFS_DESIGN = "einstellung_design"
+private const val PREFS_SCHRIFTGROESSE = "schriftgroesse"
+private const val PREFS_PAPIERKORB = "papierkorb_chats"
+private const val PREFS_SORTIERUNG = "chat_sortierung"
+
+private fun ladeSortierung(context: Context): String =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getString(PREFS_SORTIERUNG, "ZEIT_AB") ?: "ZEIT_AB"
+
+private fun speichereSortierung(context: Context, wert: String) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit().putString(PREFS_SORTIERUNG, wert).apply()
+}
+
+private fun ladeSchriftgroesse(context: Context): Int =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt(PREFS_SCHRIFTGROESSE, 16)
+
+private fun speichereSchriftgroesse(context: Context, wert: Int) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(PREFS_SCHRIFTGROESSE, wert).apply()
+}
 private const val PREFS_NOTIFY = "notify_enabled"
 private const val PREFS_NOTIFY_POPUP = "notify_popup"
 private const val PREFS_NOTIFY_SOUND = "notify_sound"
@@ -168,6 +259,27 @@ private const val PREFS_NOTIFY_VIBRATE = "notify_vibrate"
 private const val PREFS_NOTIFY_PREVIEW = "notify_preview"
 private const val PREFS_ACTIVE_PHONE = "active_phone"
 private const val PREFS_UNREAD = "unread_total"
+private const val PREFS_UNREAD_PHONES = "unread_phones"
+
+private fun ungeleseneNummern(context: Context): Set<String> =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getStringSet(PREFS_UNREAD_PHONES, emptySet())?.toSet() ?: emptySet()
+
+private fun chatIstUngelesen(context: Context, telefon: String): Boolean {
+    val n = normalisiereTelefonnummer(telefon)
+    return n.isNotBlank() && ungeleseneNummern(context).contains(n)
+}
+
+private fun markiereUngelesen(context: Context, telefon: String) {
+    val n = normalisiereTelefonnummer(telefon)
+    if (n.isBlank()) return
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    if (gleicheTelefonnummer(prefs.getString(PREFS_ACTIVE_PHONE, "").orEmpty(), telefon)) return
+    val set = prefs.getStringSet(PREFS_UNREAD_PHONES, emptySet())?.toMutableSet() ?: mutableSetOf()
+    set.add(n)
+    prefs.edit().putStringSet(PREFS_UNREAD_PHONES, set).apply()
+}
+private const val ACTION_SMS_CHANGED = "at.leosnet.leosmessenger.SMS_CHANGED"
 
 private fun notifyBool(context: Context, key: String, standard: Boolean = true): Boolean =
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(key, standard)
@@ -187,13 +299,22 @@ private fun zeigeSmsBenachrichtigung(context: Context, nummer: String, text: Str
     val vibrate = notifyBool(context, PREFS_NOTIFY_VIBRATE)
     val preview = notifyBool(context, PREFS_NOTIFY_PREVIEW)
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    val channelId = "sms_${if (popup) "high" else "normal"}_${if (sound) "s" else "silent"}_${if (vibrate) "v" else "nov"}"
+    val channelId = "sms_v138_${if (popup) "high" else "normal"}_${if (sound) "s" else "silent"}_${if (vibrate) "v" else "nov"}"
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         val importance = if (popup) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_DEFAULT
         val channel = NotificationChannel(channelId, "Neue SMS", importance).apply {
             description = "Benachrichtigungen für neue SMS"
             enableVibration(vibrate)
-            if (!sound) setSound(null, null)
+            if (sound) {
+                val soundUri = android.provider.Settings.System.DEFAULT_NOTIFICATION_URI
+                val audioAttributes = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                setSound(soundUri, audioAttributes)
+            } else {
+                setSound(null, null)
+            }
             setShowBadge(true)
         }
         manager.createNotificationChannel(channel)
@@ -204,7 +325,11 @@ private fun zeigeSmsBenachrichtigung(context: Context, nummer: String, text: Str
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
     }
     val pending = PendingIntent.getActivity(context, normalisiereTelefonnummer(nummer).hashCode(), openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    val name = findeKontaktName(context, nummer) ?: nummer
+    val gespeicherterChatName = ladeChats(context)
+        .firstOrNull { gleicheTelefonnummer(it.telefon, nummer) }
+        ?.name
+        ?.takeIf { it.isNotBlank() && !gleicheTelefonnummer(it, nummer) }
+    val name = gespeicherterChatName ?: findeKontaktName(context, nummer) ?: nummer
     val notification = NotificationCompat.Builder(context, channelId)
         .setSmallIcon(android.R.drawable.sym_action_chat)
         .setContentTitle(name)
@@ -214,6 +339,8 @@ private fun zeigeSmsBenachrichtigung(context: Context, nummer: String, text: Str
         .setAutoCancel(true)
         .setCategory(NotificationCompat.CATEGORY_MESSAGE)
         .setPriority(if (popup) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+        .setSound(if (sound) android.provider.Settings.System.DEFAULT_NOTIFICATION_URI else null)
+        .setVibrate(if (vibrate) longArrayOf(0, 180, 120, 180) else longArrayOf(0))
         .setNumber(unread)
         .build()
     manager.notify(normalisiereTelefonnummer(nummer).hashCode(), notification)
@@ -223,7 +350,10 @@ private fun chatAlsGelesen(context: Context, telefon: String) {
     if (telefon.isBlank()) return
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     manager.cancel(normalisiereTelefonnummer(telefon).hashCode())
-    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(PREFS_UNREAD, 0).apply()
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val set = prefs.getStringSet(PREFS_UNREAD_PHONES, emptySet())?.toMutableSet() ?: mutableSetOf()
+    set.remove(normalisiereTelefonnummer(telefon))
+    prefs.edit().putStringSet(PREFS_UNREAD_PHONES, set).putInt(PREFS_UNREAD, set.size).apply()
 }
 
 private fun ladeFarbe(context: Context): String =
@@ -398,6 +528,46 @@ private fun speichereChats(context: Context, chats: List<Chat>) {
         .edit().putString(PREFS_CHATS, chatArray.toString()).apply()
 }
 
+private fun chatListeAlsJson(chats: List<Chat>): String {
+    val a = JSONArray()
+    chats.forEach { c ->
+        val ma = JSONArray()
+        c.nachrichten.forEach { n -> ma.put(JSONObject().apply {
+            put("id", n.id); put("text", n.text); put("zeitMillis", n.zeitMillis); put("vonMir", n.vonMir); put("status", n.status)
+        }) }
+        a.put(JSONObject().apply {
+            put("id", c.id); put("name", c.name); put("kuerzel", c.kuerzel); put("telefon", c.telefon); put("nachrichten", ma)
+        })
+    }
+    return a.toString()
+}
+private fun chatListeAusJson(json: String?): List<Chat> {
+    if (json.isNullOrBlank()) return emptyList()
+    return try {
+        val a=JSONArray(json)
+        buildList {
+            for(i in 0 until a.length()) {
+                val c=a.getJSONObject(i); val ma=c.getJSONArray("nachrichten")
+                val ms=buildList {
+                    for(j in 0 until ma.length()) {
+                        val n=ma.getJSONObject(j)
+                        add(Nachricht(n.getLong("id"),n.getString("text"),n.getLong("zeitMillis"),n.getBoolean("vonMir"),n.optInt("status",2)))
+                    }
+                }
+                add(Chat(c.getLong("id"),c.getString("name"),c.getString("kuerzel"),ms,c.optString("telefon","")))
+            }
+        }
+    } catch(_:Exception){ emptyList() }
+}
+private fun ladePapierkorb(context: Context)=chatListeAusJson(context.getSharedPreferences(PREFS_NAME,Context.MODE_PRIVATE).getString(PREFS_PAPIERKORB,null))
+private fun speicherePapierkorb(context: Context,chats:List<Chat>){
+    context.getSharedPreferences(PREFS_NAME,Context.MODE_PRIVATE).edit().putString(PREFS_PAPIERKORB,chatListeAlsJson(chats)).apply()
+}
+private fun aktualisiereKontaktNamen(context: Context,chats:List<Chat>)=chats.map { c ->
+    if(c.telefon.isBlank()) c else findeKontaktName(context,c.telefon)?.takeIf{it.isNotBlank()}?.let{ c.copy(name=it,kuerzel=kuerzelAusName(it)) } ?: c
+}
+
+
 private fun istStandardSmsApp(context: Context): Boolean =
     Telephony.Sms.getDefaultSmsPackage(context) == context.packageName
 
@@ -411,21 +581,7 @@ private fun importiereSystemSms(context: Context, bestehend: List<Chat>, meldung
     var gelesen = 0
     var neuImportiert = 0
 
-    fun kontaktName(nummer: String): String? {
-        return try {
-            val uri = Uri.withAppendedPath(
-                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-                Uri.encode(nummer)
-            )
-            context.contentResolver.query(
-                uri,
-                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
-                null, null, null
-            )?.use { c ->
-                if (c.moveToFirst()) c.getString(0) else null
-            }
-        } catch (_: Exception) { null }
-    }
+    fun kontaktName(nummer: String): String? = findeKontaktName(context, nummer)
 
     fun importiere(uri: Uri, vonMir: Boolean) {
         val projection = arrayOf(
@@ -486,7 +642,10 @@ private fun importiereSystemSms(context: Context, bestehend: List<Chat>, meldung
         importiere(Telephony.Sms.Inbox.CONTENT_URI, false)
         importiere(Telephony.Sms.Sent.CONTENT_URI, true)
 
-        val sortiert = chats.sortedByDescending {
+        val sortiert = chats.map { chat ->
+            val kontakt = findeKontaktName(context, chat.telefon)
+            if (!kontakt.isNullOrBlank()) chat.copy(name = kontakt, kuerzel = kuerzelAusName(kontakt)) else chat
+        }.sortedByDescending {
             it.nachrichten.maxOfOrNull { n -> n.zeitMillis } ?: 0L
         }
         speichereChats(context, sortiert)
@@ -541,10 +700,34 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                 val synchronisiert = importiereSystemSms(context, ladeChats(context), meldungAnzeigen = false)
                 chats.clear()
                 chats.addAll(synchronisiert)
+                val mitNamen = aktualisiereKontaktNamen(context, chats)
+                chats.clear()
+                chats.addAll(mitNamen)
+                speichereChats(context, chats)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // V1.2.0: Eingehende SMS sofort in die Compose-Oberfläche übernehmen,
+    // auch wenn Leo`s Messenger bereits im Vordergrund geöffnet ist.
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action == ACTION_SMS_CHANGED) {
+                    val aktuell = ladeChats(context)
+                    chats.clear()
+                    chats.addAll(aktuell)
+                }
+            }
+        }
+        ContextCompat.registerReceiver(
+            context, receiver, IntentFilter(ACTION_SMS_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        onDispose {
+            try { context.unregisterReceiver(receiver) } catch (_: Exception) { }
+        }
     }
 
     val berechtigungsLauncher = rememberLauncherForActivityResult(
@@ -567,6 +750,7 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.SEND_SMS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_SMS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_SMS)
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_MMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_MMS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_WAP_PUSH) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_WAP_PUSH)
                 if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
@@ -590,6 +774,7 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.SEND_SMS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_SMS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_SMS)
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_MMS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_MMS)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_WAP_PUSH) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECEIVE_WAP_PUSH)
                 if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
@@ -624,6 +809,10 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
     var bearbeitenChat by remember { mutableStateOf<Chat?>(null) }
     var loeschenChat by remember { mutableStateOf<Chat?>(null) }
     var einstellungenOffen by remember { mutableStateOf(false) }
+    var hilfeOffen by remember { mutableStateOf(false) }
+    var papierkorbOffen by remember { mutableStateOf(false) }
+    val papierkorb = remember { mutableStateListOf<Chat>().apply { addAll(ladePapierkorb(context)) } }
+    var schriftgroesse by remember { mutableIntStateOf(ladeSchriftgroesse(context)) }
     var farbName by remember { mutableStateOf(ladeFarbe(context)) }
     var farbeEmpfang by remember { mutableStateOf(ladeEinzelFarbe(context, PREFS_FARBE_EMPFANG, "Hellblau")) }
     var farbeGesendet by remember { mutableStateOf(ladeEinzelFarbe(context, PREFS_FARBE_GESENDET, "Gelb")) }
@@ -681,6 +870,8 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             onNeuerChat = { neuerChatDialog = true },
             akzentFarbe = akzentFarbe,
             onEinstellungen = { einstellungenOffen = true },
+            onHilfe = { hilfeOffen = true },
+            onPapierkorb = { papierkorbOffen = true },
             onSmsNeuEinlesen = {
                 val lesenErlaubt = ContextCompat.checkSelfPermission(
                     context, Manifest.permission.READ_SMS
@@ -694,7 +885,14 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                 }
             },
             onBearbeiten = { bearbeitenChat = it },
-            onLoeschen = { loeschenChat = it }
+            onLoeschen = { chat ->
+                // Nur ein Papierkorb-Eintrag pro Telefonnummer.
+                papierkorb.removeAll { gleicheTelefonnummer(it.telefon, chat.telefon) }
+                papierkorb.add(0, chat)
+                chats.removeAll { it.id == chat.id || gleicheTelefonnummer(it.telefon, chat.telefon) }
+                speichereChats(context, chats)
+                speicherePapierkorb(context, papierkorb)
+            }
         )
     } else {
         BackHandler { offenerChatId = null }
@@ -704,7 +902,17 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             designName = designName,
             farbeEmpfang = farbeAuswahl(farbeEmpfang),
             farbeGesendet = farbeAuswahl(farbeGesendet),
+            schriftgroesse = schriftgroesse,
             onZurueck = { offenerChatId = null },
+            onNachrichtLoeschen = { nachricht ->
+                val index = chats.indexOfFirst { it.id == offenerChat.id }
+                if (index >= 0) {
+                    chats[index] = chats[index].copy(
+                        nachrichten = chats[index].nachrichten.filterNot { it.id == nachricht.id }
+                    )
+                    speichereChats(context, chats)
+                }
+            },
             onNachrichtSenden = { text ->
                 if (sendeSms(context, offenerChat.telefon, text)) {
                     val index = chats.indexOfFirst { it.id == offenerChat.id }
@@ -776,24 +984,92 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
         )
     }
 
+    if (papierkorbOffen) {
+        AlertDialog(
+            onDismissRequest = { papierkorbOffen = false },
+            title = { Text("Papierkorb") },
+            text = {
+                Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (papierkorb.isEmpty()) Text("Der Papierkorb ist leer.")
+                    papierkorb.toList().forEach { chat ->
+                        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Text(chat.name, fontWeight = FontWeight.Bold)
+                            if(chat.telefon.isNotBlank()) Text(chat.telefon, fontSize = 12.sp, color = Color.Gray)
+                            Row {
+                                TextButton(onClick = {
+                                    val aktivIndex = chats.indexOfFirst { gleicheTelefonnummer(it.telefon, chat.telefon) }
+                                    if (aktivIndex >= 0) {
+                                        val aktiv = chats[aktivIndex]
+                                        val zusammen = (chat.nachrichten + aktiv.nachrichten)
+                                            .distinctBy { n -> "${n.vonMir}|${n.zeitMillis}|${n.text}" }
+                                            .sortedBy { it.zeitMillis }
+                                        chats[aktivIndex] = aktiv.copy(nachrichten = zusammen)
+                                    } else {
+                                        chats.add(0, chat)
+                                    }
+                                    papierkorb.removeAll { gleicheTelefonnummer(it.telefon, chat.telefon) }
+                                    speichereChats(context,chats); speicherePapierkorb(context,papierkorb)
+                                }) { Text("Wiederherstellen") }
+                                TextButton(onClick = {
+                                    papierkorb.removeAll{it.id==chat.id}; speicherePapierkorb(context,papierkorb)
+                                }) { Text("Endgültig löschen") }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick={papierkorbOffen=false}) { Text("Schließen") } },
+            dismissButton = { if(papierkorb.isNotEmpty()) TextButton(onClick={papierkorb.clear();speicherePapierkorb(context,papierkorb)}) { Text("Papierkorb leeren") } }
+        )
+    }
+
+    if (hilfeOffen) {
+        AlertDialog(
+            onDismissRequest = { hilfeOffen = false },
+            title = { Text("Hilfe – Leo`s Messenger") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Nachrichten", fontWeight = FontWeight.Bold)
+                    Text("Tippe auf einen Chat, um ihn zu öffnen. Halte Text gedrückt, um einzelne Textstellen zu markieren und zu kopieren.")
+                    Text("Nachricht löschen", fontWeight = FontWeight.Bold)
+                    Text("Wische eine einzelne Nachricht nach rechts. Nach ausreichendem Wischen wird nur diese Nachricht aus Leo`s Messenger gelöscht.")
+                    Text("Ungelesen", fontWeight = FontWeight.Bold)
+                    Text("Neue, noch nicht geöffnete Chats werden in der Übersicht deutlich markiert. Beim Öffnen wird die Markierung entfernt.")
+                    Text("Einstellungen", fontWeight = FontWeight.Bold)
+                    Text("Unter Einstellungen kannst du Farben, Sprechblasen, Schriftgröße und Benachrichtigungen anpassen. Über „Sortierung“ im Hauptmenü ordnest du Chats nach Zeit oder Name.")
+                    Text("SMS-Verlauf", fontWeight = FontWeight.Bold)
+                    Text("Mit „SMS-Verlauf neu einlesen“ kannst du den Android-SMS-Speicher erneut synchronisieren.")
+                }
+            },
+            confirmButton = { TextButton(onClick = { hilfeOffen = false }) { Text("OK") } }
+        )
+    }
+
     if (einstellungenOffen) {
         EinstellungenDialog(
             aktuelleFarbeEmpfang = farbeEmpfang,
             aktuelleFarbeGesendet = farbeGesendet,
             aktuelleFarbeUebersicht = farbeUebersicht,
             aktuellesDesign = designName,
+            aktuelleSchriftgroesse = schriftgroesse,
             notifyEnabledStart = notifyBool(context, PREFS_NOTIFY),
             notifyPopupStart = notifyBool(context, PREFS_NOTIFY_POPUP),
             notifySoundStart = notifyBool(context, PREFS_NOTIFY_SOUND),
             notifyVibrateStart = notifyBool(context, PREFS_NOTIFY_VIBRATE),
             notifyPreviewStart = notifyBool(context, PREFS_NOTIFY_PREVIEW),
             onAbbrechen = { einstellungenOffen = false },
-            onSpeichern = { empfang, gesendet, uebersicht, design, nEnabled, nPopup, nSound, nVibrate, nPreview ->
+            onSpeichern = { empfang, gesendet, uebersicht, design, textSize, nEnabled, nPopup, nSound, nVibrate, nPreview ->
                 farbeEmpfang = empfang
                 farbeGesendet = gesendet
                 farbeUebersicht = uebersicht
                 farbName = uebersicht
                 designName = design
+                schriftgroesse = textSize
+                speichereSchriftgroesse(context, textSize)
                 speichereEinzelFarbe(context, PREFS_FARBE_EMPFANG, empfang)
                 speichereEinzelFarbe(context, PREFS_FARBE_GESENDET, gesendet)
                 speichereEinzelFarbe(context, PREFS_FARBE_UEBERSICHT, uebersicht)
@@ -830,29 +1106,40 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
     }
 }
 
-private fun findeKontaktName(context: Context, nummer: String): String? {
-    return try {
-        val uri = Uri.withAppendedPath(
-            ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-            Uri.encode(nummer)
-        )
-        context.contentResolver.query(
-            uri,
-            arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
-            null, null, null
-        )?.use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }
-    } catch (_: Exception) { null }
+private fun kanonischeTelefonnummer(nummer: String): String {
+    var n = nummer.trim().filter { it.isDigit() }
+    if (n.startsWith("0043")) n = "0" + n.drop(4)
+    else if (n.startsWith("43") && !n.startsWith("0")) n = "0" + n.drop(2)
+    return n.trimStart('0').let { if (it.isBlank()) n else it }
 }
 
-private fun normalisiereTelefonnummer(nummer: String): String =
-    nummer.filter { it.isDigit() }.takeLast(10)
+private fun findeKontaktName(context: Context, nummer: String): String? {
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return null
+    val varianten = linkedSetOf(nummer.trim())
+    val ziffern = nummer.filter { it.isDigit() }
+    if (ziffern.startsWith("43")) varianten.add("0" + ziffern.drop(2))
+    if (ziffern.startsWith("0043")) varianten.add("0" + ziffern.drop(4))
+    if (ziffern.startsWith("0")) varianten.add("+43" + ziffern.drop(1))
+    for (v in varianten) {
+        try {
+            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(v))
+            context.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) return c.getString(0)
+            }
+        } catch (_: Exception) { }
+    }
+    return null
+}
+
+private fun normalisiereTelefonnummer(nummer: String): String = kanonischeTelefonnummer(nummer)
 
 private fun gleicheTelefonnummer(a: String, b: String): Boolean {
-    val na = normalisiereTelefonnummer(a)
-    val nb = normalisiereTelefonnummer(b)
-    return na.length >= 7 && nb.length >= 7 && na == nb
+    val na = kanonischeTelefonnummer(a)
+    val nb = kanonischeTelefonnummer(b)
+    if (na.isBlank() || nb.isBlank()) return false
+    if (na == nb) return true
+    // Fallback für internationale Schreibweisen, aber nur mit ausreichend Ziffern.
+    return na.length >= 7 && nb.length >= 7 && (na.endsWith(nb) || nb.endsWith(na))
 }
 
 private fun sendeSms(context: Context, telefon: String, text: String): Boolean {
@@ -976,13 +1263,14 @@ private fun EinstellungenDialog(
     aktuelleFarbeGesendet: String,
     aktuelleFarbeUebersicht: String,
     aktuellesDesign: String,
+    aktuelleSchriftgroesse: Int,
     notifyEnabledStart: Boolean,
     notifyPopupStart: Boolean,
     notifySoundStart: Boolean,
     notifyVibrateStart: Boolean,
     notifyPreviewStart: Boolean,
     onAbbrechen: () -> Unit,
-    onSpeichern: (String, String, String, String, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
+    onSpeichern: (String, String, String, String, Int, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     val farben = listOf(
         "Weiß", "Hellgrau", "Grau", "Dunkelgrau",
@@ -994,6 +1282,7 @@ private fun EinstellungenDialog(
     var gesendet by remember(aktuelleFarbeGesendet) { mutableStateOf(aktuelleFarbeGesendet) }
     var uebersicht by remember(aktuelleFarbeUebersicht) { mutableStateOf(aktuelleFarbeUebersicht) }
     var design by remember(aktuellesDesign) { mutableStateOf(aktuellesDesign) }
+    var textSize by remember(aktuelleSchriftgroesse) { mutableIntStateOf(aktuelleSchriftgroesse) }
     var nEnabled by remember { mutableStateOf(notifyEnabledStart) }
     var nPopup by remember { mutableStateOf(notifyPopupStart) }
     var nSound by remember { mutableStateOf(notifySoundStart) }
@@ -1019,7 +1308,10 @@ private fun EinstellungenDialog(
         onDismissRequest = onAbbrechen,
         title = { Text("Einstellungen") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
                 Text("Farben", fontWeight = FontWeight.Bold)
                 Farbreihe("Empfangene Nachrichten", empfang) { empfang = it }
                 Farbreihe("Gesendete Nachrichten", gesendet) { gesendet = it }
@@ -1029,9 +1321,19 @@ private fun EinstellungenDialog(
                 designs.forEach { eintrag ->
                     Row(Modifier.fillMaxWidth().clickable { design = eintrag }, verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = design == eintrag, onClick = { design = eintrag })
-                        Text(eintrag)
+                        Text(if (eintrag == "Wie jetzt") "Standard" else eintrag)
                     }
                 }
+                HorizontalDivider()
+                Text("Schriftgröße", fontWeight = FontWeight.Bold)
+                Text("$textSize pt")
+                Slider(
+                    value = textSize.toFloat(),
+                    onValueChange = { textSize = it.toInt().coerceIn(12, 24) },
+                    valueRange = 12f..24f,
+                    steps = 11
+                )
+                Text("Beispiel: So sieht eine Nachricht aus.", fontSize = textSize.sp)
                 HorizontalDivider()
                 Text("Benachrichtigungen", fontWeight = FontWeight.Bold)
                 @Composable fun Schalter(text: String, checked: Boolean, enabled: Boolean = true, change: (Boolean) -> Unit) {
@@ -1047,7 +1349,7 @@ private fun EinstellungenDialog(
                 Schalter("Nachrichtenvorschau", nPreview, nEnabled) { nPreview = it }
             }
         },
-        confirmButton = { TextButton(onClick = { onSpeichern(empfang, gesendet, uebersicht, design, nEnabled, nPopup, nSound, nVibrate, nPreview) }) { Text("Speichern") } },
+        confirmButton = { TextButton(onClick = { onSpeichern(empfang, gesendet, uebersicht, design, textSize, nEnabled, nPopup, nSound, nVibrate, nPreview) }) { Text("Speichern") } },
         dismissButton = { TextButton(onClick = onAbbrechen) { Text("Abbrechen") } }
     )
 }
@@ -1060,27 +1362,37 @@ private fun ChatUebersicht(
     onNeuerChat: () -> Unit,
     akzentFarbe: Color,
     onEinstellungen: () -> Unit,
+    onHilfe: () -> Unit,
+    onPapierkorb: () -> Unit,
     onSmsNeuEinlesen: () -> Unit,
     onBearbeiten: (Chat) -> Unit,
     onLoeschen: (Chat) -> Unit
 ) {
     var suche by remember { mutableStateOf("") }
+    val context = androidx.compose.ui.platform.LocalContext.current
     var hauptmenuOffen by remember { mutableStateOf(false) }
+    var sortiermenuOffen by remember { mutableStateOf(false) }
+    var sortierung by remember { mutableStateOf(ladeSortierung(context)) }
     var infoOffen by remember { mutableStateOf(false) }
-    val gefilterteChats = remember(chats, suche) {
-        val q = suche.trim()
-        if (q.isBlank()) chats else chats.filter { chat ->
-            chat.name.contains(q, ignoreCase = true) ||
-                chat.telefon.contains(q, ignoreCase = true) ||
-                chat.nachrichten.any { it.text.contains(q, ignoreCase = true) }
-        }
+    val q = suche.trim()
+    val basisChats = chats.toList()
+    val gefilterteBasis = if (q.isBlank()) basisChats else basisChats.filter { chat ->
+        chat.name.contains(q, ignoreCase = true) ||
+            chat.telefon.contains(q, ignoreCase = true) ||
+            chat.nachrichten.any { it.text.contains(q, ignoreCase = true) }
+    }
+    val gefilterteChats = when (sortierung) {
+        "ZEIT_AUF" -> gefilterteBasis.sortedBy { it.nachrichten.maxOfOrNull { n -> n.zeitMillis } ?: 0L }
+        "NAME_AUF" -> gefilterteBasis.sortedBy { it.name.lowercase(Locale.getDefault()) }
+        "NAME_AB" -> gefilterteBasis.sortedByDescending { it.name.lowercase(Locale.getDefault()) }
+        else -> gefilterteBasis.sortedByDescending { it.nachrichten.maxOfOrNull { n -> n.zeitMillis } ?: 0L }
     }
 
     if (infoOffen) {
         val anzahlNachrichten = chats.sumOf { it.nachrichten.size }
         AlertDialog(
             onDismissRequest = { infoOffen = false },
-            title = { Text("Leo`s Messenger V1.1.4") },
+            title = { Text("Leo`s Messenger V1.4.4") },
             text = {
                 Text(
                     "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
@@ -1089,6 +1401,46 @@ private fun ChatUebersicht(
             },
             confirmButton = {
                 TextButton(onClick = { infoOffen = false }) { Text("OK") }
+            }
+        )
+    }
+
+    if (sortiermenuOffen) {
+        val optionen = listOf(
+            "ZEIT_AB" to "Zeit – neueste zuerst",
+            "ZEIT_AUF" to "Zeit – älteste zuerst",
+            "NAME_AUF" to "Name – A bis Z",
+            "NAME_AB" to "Name – Z bis A"
+        )
+        AlertDialog(
+            onDismissRequest = { sortiermenuOffen = false },
+            title = { Text("Chatübersicht sortieren") },
+            text = {
+                Column {
+                    optionen.forEach { (wert, text) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                sortierung = wert
+                                speichereSortierung(context, wert)
+                                sortiermenuOffen = false
+                            },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = sortierung == wert,
+                                onClick = {
+                                    sortierung = wert
+                                    speichereSortierung(context, wert)
+                                    sortiermenuOffen = false
+                                }
+                            )
+                            Text(text)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { sortiermenuOffen = false }) { Text("Schließen") }
             }
         )
     }
@@ -1119,6 +1471,13 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
+                                text = { Text("Sortierung") },
+                                onClick = {
+                                    hauptmenuOffen = false
+                                    sortiermenuOffen = true
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("SMS-Verlauf neu einlesen") },
                                 onClick = {
                                     hauptmenuOffen = false
@@ -1126,7 +1485,18 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Info zu V1.1.4") },
+                                text = { Text("Papierkorb") },
+                                onClick = { hauptmenuOffen = false; onPapierkorb() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Hilfe") },
+                                onClick = {
+                                    hauptmenuOffen = false
+                                    onHilfe()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Info zu V1.4.4") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     infoOffen = true
@@ -1181,10 +1551,12 @@ private fun ChatUebersicht(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = 2.dp, bottom = 88.dp)
                 ) {
-                    items(gefilterteChats, key = { it.id }) { chat ->
+                    items(gefilterteChats.size, key = { index -> "chat_${gefilterteChats[index].id}_${index}" }) { index ->
+                        val chat = gefilterteChats[index]
                         ChatZeile(
                             chat = chat,
                             akzentFarbe = akzentFarbe,
+                            ungelesen = chatIstUngelesen(context, chat.telefon),
                             onClick = { onChatClick(chat) },
                             onBearbeiten = { onBearbeiten(chat) },
                             onLoeschen = { onLoeschen(chat) }
@@ -1201,19 +1573,102 @@ private fun ChatUebersicht(
 private fun ChatZeile(
     chat: Chat,
     akzentFarbe: Color,
+    ungelesen: Boolean,
     onClick: () -> Unit,
     onBearbeiten: () -> Unit,
     onLoeschen: () -> Unit
 ) {
     var menuOffen by remember { mutableStateOf(false) }
+    var swipeX by remember(chat.id) { mutableFloatStateOf(0f) }
+    var wirdGeloescht by remember(chat.id) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val loeschOffset by animateFloatAsState(
+        targetValue = if (wirdGeloescht) 900f else 0f,
+        animationSpec = tween(520),
+        label = "chatLoeschOffset"
+    )
+    val loeschY by animateFloatAsState(
+        targetValue = if (wirdGeloescht) (-90f) else 0f,
+        animationSpec = tween(520),
+        label = "chatLoeschY"
+    )
+    val loeschRotation by animateFloatAsState(
+        targetValue = if (wirdGeloescht) 16f else 0f,
+        animationSpec = tween(520),
+        label = "chatLoeschRotation"
+    )
+    val loeschScale by animateFloatAsState(
+        targetValue = if (wirdGeloescht) 0.55f else 1f,
+        animationSpec = tween(520),
+        label = "chatLoeschScale"
+    )
+    val loeschAlpha by animateFloatAsState(
+        targetValue = if (wirdGeloescht) 0f else 1f,
+        animationSpec = tween(520),
+        label = "chatLoeschAlpha"
+    )
     val letzte = chat.nachrichten.maxByOrNull { it.zeitMillis }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(start = 14.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+
+    fun animiertLoeschen() {
+        if (wirdGeloescht) return
+        wirdGeloescht = true
+        scope.launch {
+            kotlinx.coroutines.delay(520)
+            onLoeschen()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        if (swipeX > 18f) {
+            Row(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(MaterialTheme.colorScheme.error)
+                    .clickable { animiertLoeschen() }
+                    .padding(start = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Start
+            ) {
+                Text("🗑", fontSize = 25.sp, color = MaterialTheme.colorScheme.onError)
+                Spacer(Modifier.width(8.dp))
+                Text("Papierkorb", color = MaterialTheme.colorScheme.onError, fontWeight = FontWeight.Bold)
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(
+                    x = ((swipeX / 3f) + loeschOffset).dp,
+                    y = loeschY.dp
+                )
+                .graphicsLayer {
+                    alpha = loeschAlpha
+                    rotationZ = loeschRotation
+                    scaleX = loeschScale
+                    scaleY = loeschScale
+                }
+                .background(
+                    if (ungelesen) akzentFarbe.copy(alpha = 0.16f)
+                    else MaterialTheme.colorScheme.surface
+                )
+                .pointerInput(chat.id) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            val loeschen = swipeX > 90f
+                            swipeX = 0f
+                            if (loeschen) animiertLoeschen()
+                        },
+                        onDragCancel = { swipeX = 0f },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            swipeX = (swipeX + dragAmount).coerceIn(0f, 300f)
+                        }
+                    )
+                }
+                .clickable(onClick = onClick)
+                .padding(start = 14.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
         Box(
             modifier = Modifier
                 .size(52.dp)
@@ -1225,16 +1680,23 @@ private fun ChatZeile(
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(chat.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(chat.name, fontSize = 17.sp, fontWeight = if (ungelesen) FontWeight.Bold else FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (ungelesen) Box(Modifier.padding(horizontal = 6.dp).size(14.dp).background(akzentFarbe, CircleShape))
                 if (letzte != null) {
-                    Text(kurzeZeit(letzte.zeitMillis), fontSize = 11.sp, color = Color.Gray)
+                    Text(
+                        kurzeZeit(letzte.zeitMillis),
+                        fontSize = 11.sp,
+                        color = if (ungelesen) akzentFarbe else Color.Gray,
+                        fontWeight = if (ungelesen) FontWeight.Bold else FontWeight.Normal
+                    )
                 }
             }
             Spacer(Modifier.height(4.dp))
             Text(
                 text = letzte?.text ?: "Noch keine Nachrichten",
                 fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (ungelesen) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (ungelesen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1255,12 +1717,14 @@ private fun ChatZeile(
                     text = { Text("Löschen") },
                     onClick = {
                         menuOffen = false
-                        onLoeschen()
+                        animiertLoeschen()
                     }
                 )
             }
         }
     }
+}
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1271,16 +1735,64 @@ private fun ChatAnsicht(
     designName: String,
     farbeEmpfang: Color,
     farbeGesendet: Color,
+    schriftgroesse: Int,
     onZurueck: () -> Unit,
+    onNachrichtLoeschen: (Nachricht) -> Unit,
     onNachrichtSenden: (String) -> Unit
 ) {
     var eingabe by remember(chat.id) { mutableStateOf("") }
     val context = androidx.compose.ui.platform.LocalContext.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    var overlayNachricht by remember(chat.id) { mutableStateOf<Nachricht?>(null) }
+    var overlaySichtbar by remember(chat.id) { mutableStateOf(false) }
+    var letzteBekannteNachrichtId by remember(chat.id) {
+        mutableLongStateOf(chat.nachrichten.lastOrNull()?.id ?: Long.MIN_VALUE)
+    }
 
-    LaunchedEffect(chat.id, chat.nachrichten.size) {
-        if (chat.nachrichten.isNotEmpty()) listState.scrollToItem(chat.nachrichten.lastIndex)
+    var letzteAnimierteNachricht by remember(chat.id) {
+        mutableLongStateOf(chat.nachrichten.lastOrNull()?.id ?: Long.MIN_VALUE)
+    }
+
+    // V1.4.4: Neue Nachricht schon in derselben Compose-Phase als "fliegend"
+    // erkennen. Dadurch wird das echte Listenelement sofort unsichtbar und
+    // kann nicht mehr für einen Frame unten aufblitzen.
+    val aktuelleLetzte = chat.nachrichten.lastOrNull()
+    val wartetAufEinflug =
+        aktuelleLetzte != null &&
+        letzteBekannteNachrichtId != Long.MIN_VALUE &&
+        aktuelleLetzte.id != letzteBekannteNachrichtId
+
+    LaunchedEffect(chat.id, aktuelleLetzte?.id) {
+        val letzte = aktuelleLetzte ?: return@LaunchedEffect
+        if (wartetAufEinflug) {
+            overlayNachricht = letzte
+            overlaySichtbar = true
+
+            // V1.4.4: Kein animateScrollToItem mehr während des Einflugs.
+            // Stattdessen wird die Liste über fast die gesamte Flugzeit kontrolliert
+            // und weich um ungefähr eine Nachrichtenhöhe nach oben geschoben.
+            scope.launch {
+                kotlinx.coroutines.delay(40)
+                listState.animateScrollBy(
+                    value = 96f,
+                    animationSpec = tween(
+                        durationMillis = 500,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                    )
+                )
+            }
+
+            kotlinx.coroutines.delay(560)
+            overlaySichtbar = false
+            overlayNachricht = null
+            letzteBekannteNachrichtId = letzte.id
+            letzteAnimierteNachricht = letzte.id
+        } else {
+            listState.scrollToItem(chat.nachrichten.lastIndex)
+            letzteBekannteNachrichtId = letzte.id
+            letzteAnimierteNachricht = letzte.id
+        }
     }
 
     Scaffold(
@@ -1368,19 +1880,62 @@ private fun ChatAnsicht(
             }
         }
     ) { padding ->
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
-            contentPadding = PaddingValues(top = 10.dp, bottom = 10.dp)
-        ) {
-            items(chat.nachrichten, key = { it.id }) { nachricht ->
-                val index = chat.nachrichten.indexOfFirst { it.id == nachricht.id }
-                val vorher = if (index > 0) chat.nachrichten[index - 1] else null
-                if (vorher == null || !gleicherTag(vorher.zeitMillis, nachricht.zeitMillis)) {
-                    DatumTrenner(nachricht.zeitMillis)
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+                contentPadding = PaddingValues(top = 10.dp, bottom = 10.dp)
+            ) {
+                items(chat.nachrichten.size, key = { pos -> "msg_${chat.id}_${chat.nachrichten[pos].id}_${pos}" }) { pos ->
+                    val nachricht = chat.nachrichten[pos]
+                    val vorher = if (pos > 0) chat.nachrichten[pos - 1] else null
+                    Column(
+                        modifier = Modifier.fillMaxWidth().graphicsLayer {
+                            alpha = if (
+                                (overlaySichtbar && overlayNachricht?.id == nachricht.id) ||
+                                (wartetAufEinflug && aktuelleLetzte?.id == nachricht.id)
+                            ) 0f else 1f
+                        }
+                    ) {
+                        if (vorher == null || !gleicherTag(vorher.zeitMillis, nachricht.zeitMillis)) DatumTrenner(nachricht.zeitMillis)
+                        NachrichtenBlase(
+                            nachricht, akzentFarbe, designName, farbeEmpfang, farbeGesendet,
+                            schriftgroesse = schriftgroesse,
+                            onNachrichtLoeschen = { onNachrichtLoeschen(nachricht) },
+                            einflugAnimation = false
+                        )
+                    }
                 }
-                NachrichtenBlase(nachricht, akzentFarbe, designName, farbeEmpfang, farbeGesendet)
+            }
+
+            val fliegend = overlayNachricht
+            if (overlaySichtbar && fliegend != null) {
+                var gestartet by remember(fliegend.id) { mutableStateOf(false) }
+                val x by animateDpAsState(
+                    targetValue = if (gestartet) 0.dp else if (fliegend.vonMir) (-150).dp else 150.dp,
+                    animationSpec = tween(500), label = "overlayX"
+                )
+                val y by animateDpAsState(
+                    targetValue = if (gestartet) 0.dp else (-300).dp,
+                    animationSpec = tween(500), label = "overlayY"
+                )
+                LaunchedEffect(fliegend.id) { gestartet = true }
+                Box(
+                    modifier = Modifier.fillMaxSize().zIndex(100f).padding(horizontal = 10.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(modifier = Modifier.fillMaxWidth().offset(x = x, y = y)) {
+                        NachrichtenBlase(
+                            fliegend, akzentFarbe, designName, farbeEmpfang, farbeGesendet,
+                            schriftgroesse = schriftgroesse,
+                            onNachrichtLoeschen = {},
+                            einflugAnimation = false
+                        )
+                    }
+                }
             }
         }
     }
@@ -1409,28 +1964,109 @@ fun NachrichtenBlase(
     akzentFarbe: Color,
     designName: String,
     farbeEmpfang: Color,
-    farbeGesendet: Color
+    farbeGesendet: Color,
+    schriftgroesse: Int,
+    onNachrichtLoeschen: () -> Unit,
+    einflugAnimation: Boolean = true
 ) {
     val blasenFarbe = if (nachricht.vonMir) farbeGesendet else farbeEmpfang
     val sprechblase = designName == "Sprechblasen"
+    val scope = rememberCoroutineScope()
+    var sichtbar by remember(nachricht.id) { mutableStateOf(false) }
+    val alpha by animateFloatAsState(
+        targetValue = if (!einflugAnimation || sichtbar) 1f else 0f,
+        animationSpec = tween(320),
+        label = "nachrichtAlpha"
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (!einflugAnimation || sichtbar) 1f else 0.88f,
+        animationSpec = tween(320),
+        label = "nachrichtScale"
+    )
+    // V1.4.4: Empfang kommt deutlich von rechts oben, gesendet von links oben.
+    val startX = if (nachricht.vonMir) (-110).dp else 110.dp
+    val einflugX by animateDpAsState(
+        targetValue = if (!einflugAnimation || sichtbar) 0.dp else startX,
+        animationSpec = tween(480),
+        label = "nachrichtEinflugX"
+    )
+    val einflugY by animateDpAsState(
+        targetValue = if (!einflugAnimation || sichtbar) 0.dp else (-260).dp,
+        animationSpec = tween(480),
+        label = "nachrichtEinflugY"
+    )
+    LaunchedEffect(nachricht.id) { sichtbar = true }
 
+    var dragX by remember(nachricht.id) { mutableFloatStateOf(0f) }
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            // Während des Einfliegens über den bereits vorhandenen Nachrichten zeichnen.
+            .zIndex(if (sichtbar && (einflugX != 0.dp || einflugY != 0.dp)) 10f else 0f)
+            .graphicsLayer {
+                this.alpha = alpha
+                scaleX = scale
+                scaleY = scale
+            }
+            .pointerInput(nachricht.id) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        if (dragX > 120f) {
+                            sichtbar = false
+                            scope.launch {
+                                kotlinx.coroutines.delay(180)
+                                onNachrichtLoeschen()
+                            }
+                        }
+                        dragX = 0f
+                    },
+                    onDragCancel = { dragX = 0f },
+                    onHorizontalDrag = { _, dragAmount ->
+                        dragX = (dragX + dragAmount).coerceAtLeast(0f)
+                    }
+                )
+            }
+            .offset(x = einflugX + (dragX / 3f).dp, y = einflugY),
         horizontalArrangement = if (nachricht.vonMir) Arrangement.End else Arrangement.Start
     ) {
         if (!sprechblase) {
-            NachrichtenInhalt(
-                nachricht = nachricht,
-                akzentFarbe = akzentFarbe,
-                blasenFarbe = blasenFarbe,
-                modifier = Modifier.fillMaxWidth(0.82f),
-                form = RoundedCornerShape(16.dp)
-            )
+            if (!nachricht.vonMir) {
+                // Standard Empfang: kompakte Blase, Zeit rechts außen.
+                Row(verticalAlignment = Alignment.Bottom) {
+                    NachrichtenInhalt(
+                        nachricht = nachricht,
+                        akzentFarbe = akzentFarbe,
+                        blasenFarbe = blasenFarbe,
+                        modifier = Modifier.widthIn(max = 300.dp),
+                        form = RoundedCornerShape(15.dp),
+                        schriftgroesse = schriftgroesse,
+                        zeitInnen = false
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    NachrichtenZeitAussen(nachricht, blasenFarbe)
+                }
+            } else {
+                // Standard Gesendet: Zeit/Status links außen, kompakte Blase rechts.
+                Row(verticalAlignment = Alignment.Bottom) {
+                    NachrichtenZeitAussen(nachricht, blasenFarbe)
+                    Spacer(Modifier.width(7.dp))
+                    NachrichtenInhalt(
+                        nachricht = nachricht,
+                        akzentFarbe = akzentFarbe,
+                        blasenFarbe = blasenFarbe,
+                        modifier = Modifier.widthIn(max = 300.dp),
+                        form = RoundedCornerShape(15.dp),
+                        schriftgroesse = schriftgroesse,
+                        zeitInnen = false
+                    )
+                }
+            }
         } else if (!nachricht.vonMir) {
             // Empfang: kleine, separat gezeichnete Spitze links oben + runde Blase.
-            Row(verticalAlignment = Alignment.Top) {
+            Row(verticalAlignment = Alignment.Bottom) {
                 Canvas(
                     modifier = Modifier
+                        .align(Alignment.Top)
                         .padding(top = 2.dp)
                         .width(23.dp)
                         .height(19.dp)
@@ -1448,19 +2084,27 @@ fun NachrichtenBlase(
                     nachricht = nachricht,
                     akzentFarbe = akzentFarbe,
                     blasenFarbe = blasenFarbe,
-                    modifier = Modifier.fillMaxWidth(0.78f),
-                    form = RoundedCornerShape(22.dp)
+                    modifier = Modifier.widthIn(max = 300.dp),
+                    form = RoundedCornerShape(18.dp),
+                    zeitInnen = false,
+                    schriftgroesse = schriftgroesse
                 )
+                Spacer(Modifier.width(6.dp))
+                NachrichtenZeitAussen(nachricht, blasenFarbe)
             }
         } else {
             // Gesendet: runde Blase + kleine, separat gezeichnete Spitze rechts unten.
             Row(verticalAlignment = Alignment.Bottom) {
+                NachrichtenZeitAussen(nachricht, blasenFarbe)
+                Spacer(Modifier.width(6.dp))
                 NachrichtenInhalt(
                     nachricht = nachricht,
                     akzentFarbe = akzentFarbe,
                     blasenFarbe = blasenFarbe,
-                    modifier = Modifier.fillMaxWidth(0.78f),
-                    form = RoundedCornerShape(22.dp)
+                    modifier = Modifier.widthIn(max = 300.dp),
+                    form = RoundedCornerShape(18.dp),
+                    zeitInnen = false,
+                    schriftgroesse = schriftgroesse
                 )
                 Canvas(
                     modifier = Modifier
@@ -1488,40 +2132,68 @@ private fun NachrichtenInhalt(
     akzentFarbe: Color,
     blasenFarbe: Color,
     modifier: Modifier,
-    form: androidx.compose.ui.graphics.Shape
+    form: androidx.compose.ui.graphics.Shape,
+    zeitInnen: Boolean = true,
+    schriftgroesse: Int = 16
 ) {
     Column(
         modifier = modifier
             .background(blasenFarbe, form)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         SelectionContainer {
             Text(
                 nachricht.text,
-                fontSize = 16.sp,
-                lineHeight = 21.sp,
+                fontSize = schriftgroesse.sp,
+                lineHeight = (schriftgroesse + 5).sp,
                 color = kontrastFarbe(blasenFarbe)
             )
         }
-        Spacer(Modifier.height(3.dp))
-        Row(
-            modifier = Modifier.align(Alignment.End),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nachricht.zeitMillis)),
-                fontSize = 11.sp,
-                color = sekundaerTextFarbe(blasenFarbe)
-            )
-            if (nachricht.vonMir) {
-                Spacer(Modifier.width(4.dp))
+        if (zeitInnen) {
+            Spacer(Modifier.height(3.dp))
+            Row(
+                modifier = Modifier.align(Alignment.End),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    if (nachricht.status >= 2) "✓✓" else "✓",
-                    fontSize = 12.sp,
-                    color = kontrastFarbe(blasenFarbe),
-                    fontWeight = FontWeight.Bold
+                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nachricht.zeitMillis)),
+                    fontSize = 11.sp,
+                    color = sekundaerTextFarbe(blasenFarbe)
                 )
+                if (nachricht.vonMir) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (nachricht.status >= 2) "✓✓" else "✓",
+                        fontSize = 12.sp,
+                        color = kontrastFarbe(blasenFarbe),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun NachrichtenZeitAussen(nachricht: Nachricht, blasenFarbe: Color) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(bottom = 4.dp)
+    ) {
+        Text(
+            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nachricht.zeitMillis)),
+            fontSize = 11.sp,
+            color = blasenFarbe,
+            fontWeight = FontWeight.Medium
+        )
+        if (nachricht.vonMir) {
+            Spacer(Modifier.width(3.dp))
+            Text(
+                if (nachricht.status >= 2) "✓✓" else "✓",
+                fontSize = 12.sp,
+                color = blasenFarbe,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
