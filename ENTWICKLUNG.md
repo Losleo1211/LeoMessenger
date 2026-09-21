@@ -79,7 +79,20 @@ Wichtige Änderungen:
 - weiche Löschanimation und automatisches Nachrücken der Chats beibehalten
 - funktionierende Sende- und Empfangsanimationen unverändert übernommen
 
-**V1.6.1 bildet damit die aktuelle stabile Grundlage von Leo's Messenger.**
+## V1.6.2 – Codebereinigung
+Mit V1.6.2 wurde der Quellcode von älteren Entwicklungs- und Testbestandteilen bereinigt.
+Wichtige Änderungen:
+
+- alte Test-Chats „Testkontakt“, „Familie“ und „Notizen“ entfernt
+- nicht mehr benötigte Testfunktion `startChats()` entfernt
+- alte, nicht mehr benötigte Migrationslogik entfernt
+- bei einer Neuinstallation werden keine künstlichen Demo-Chats mehr angelegt
+- bestehende gespeicherte Chats und Einstellungen bleiben bei einem Update erhalten
+- keine Änderungen an der bewährten SMS-, Animations-, Papierkorb-, Sortier- und Kontaktlogik
+V1.6.2 konzentriert sich damit bewusst auf die Bereinigung des Quellcodes, ohne die bereits funktionierenden Kernfunktionen von Leo's Messenger zu verändern.
+
+**V1.6.2 bildet damit die aktuelle stabile Grundlage von Leo's Messenger.**
+
 ## Weiterentwicklung
 Leo's Messenger wird weiterhin schrittweise entwickelt.
 Dabei gilt ein wichtiges Prinzip:
