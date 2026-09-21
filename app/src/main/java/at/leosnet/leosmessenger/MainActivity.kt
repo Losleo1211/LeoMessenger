@@ -231,7 +231,6 @@ class SmsReceiver : BroadcastReceiver() {
 
 private const val PREFS_NAME = "leos_messenger"
 private const val PREFS_CHATS = "chats_v102"
-private const val PREFS_MESSAGES_ALT = "nachrichten"
 private const val PREFS_FARBE = "einstellung_farbe"
 private const val PREFS_FARBE_EMPFANG = "farbe_empfang"
 private const val PREFS_FARBE_GESENDET = "farbe_gesendet"
@@ -407,72 +406,13 @@ private fun kontrastFarbe(hintergrund: Color): Color {
 private fun sekundaerTextFarbe(hintergrund: Color): Color =
     kontrastFarbe(hintergrund).copy(alpha = 0.72f)
 
-private fun startChats(): List<Chat> {
-    val jetzt = System.currentTimeMillis()
-    return listOf(
-        Chat(
-            id = 1,
-            name = "Testkontakt",
-            kuerzel = "T",
-            nachrichten = listOf(
-                Nachricht(1, "Willkommen bei Leo`s Messenger!", jetzt - 120_000, false),
-                Nachricht(2, "Hier kannst du auch nur einen Teil einer Nachricht markieren und kopieren.", jetzt - 60_000, false),
-                Nachricht(3, "Probiere es aus: Halte deinen Finger auf diesen Text und markiere nur die Wörter, die du kopieren möchtest.", jetzt, false)
-            )
-        ),
-        Chat(
-            id = 2,
-            name = "Familie",
-            kuerzel = "F",
-            nachrichten = listOf(
-                Nachricht(21, "Das ist ein zweiter Test-Chat für die neue Chatübersicht.", jetzt - 3_600_000, false)
-            )
-        ),
-        Chat(
-            id = 3,
-            name = "Notizen",
-            kuerzel = "N",
-            nachrichten = listOf(
-                Nachricht(31, "Hier kannst du später auch Texte ablegen und einzelne Stellen kopieren.", jetzt - 86_400_000, true)
-            )
-        )
-    )
-}
-
-private fun ladeAlteNachrichten(context: Context): List<Nachricht>? {
-    val gespeichert = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        .getString(PREFS_MESSAGES_ALT, null) ?: return null
-    return try {
-        val array = JSONArray(gespeichert)
-        buildList {
-            for (i in 0 until array.length()) {
-                val o = array.getJSONObject(i)
-                add(
-                    Nachricht(
-                        id = o.getLong("id"),
-                        text = o.getString("text"),
-                        zeitMillis = o.getLong("zeitMillis"),
-                        vonMir = o.getBoolean("vonMir"),
-                        status = o.optInt("status", 2)
-                    )
-                )
-            }
-        }
-    } catch (_: Exception) {
-        null
-    }
-}
-
 private fun ladeChats(context: Context): List<Chat> {
     val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     val gespeichert = prefs.getString(PREFS_CHATS, null)
 
     if (gespeichert == null) {
-        val basis = startChats().toMutableList()
-        val alt = ladeAlteNachrichten(context)
-        if (!alt.isNullOrEmpty()) basis[0] = basis[0].copy(nachrichten = alt)
-        speichereChats(context, basis)
-        return basis
+        // V1.6.2: Keine künstlichen Test-Chats mehr bei einer Neuinstallation.
+        return emptyList()
     }
 
     return try {
@@ -499,7 +439,8 @@ private fun ladeChats(context: Context): List<Chat> {
             }
         }
     } catch (_: Exception) {
-        startChats()
+        // Beschädigte/ungültige lokale Chatdaten erzeugen keine Demo-Chats.
+        emptyList()
     }
 }
 
@@ -1440,7 +1381,7 @@ private fun ChatUebersicht(
         val anzahlNachrichten = chats.sumOf { it.nachrichten.size }
         AlertDialog(
             onDismissRequest = { infoOffen = false },
-            title = { Text("Leo`s Messenger V1.6.1") },
+            title = { Text("Leo`s Messenger V1.6.2") },
             text = {
                 Text(
                     "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
@@ -1544,7 +1485,7 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Info zu V1.6.1") },
+                                text = { Text("Info zu V1.6.2") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     infoOffen = true
