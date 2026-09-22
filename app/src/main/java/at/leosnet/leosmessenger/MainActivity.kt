@@ -1,4 +1,6 @@
 package at.leosnet.leosmessenger
+import androidx.compose.animation.core.FastOutSlowInEasing
+import kotlinx.coroutines.delay
 
 import android.Manifest
 import android.content.BroadcastReceiver
@@ -19,6 +21,7 @@ import android.net.Uri
 import android.provider.Telephony
 import android.content.ContentValues
 import android.telephony.SmsManager
+import android.graphics.BitmapFactory
 import android.widget.Toast
 import android.provider.ContactsContract
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,17 +44,20 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -60,9 +66,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -82,7 +92,9 @@ data class Nachricht(
     val text: String,
     val zeitMillis: Long,
     val vonMir: Boolean,
-    val status: Int = 2
+    val status: Int = 2,
+    val mmsBildUri: String? = null,
+    val mmsMime: String? = null
 )
 
 data class Chat(
@@ -120,13 +132,6 @@ class MainActivity : ComponentActivity() {
 
 class RespondViaMessageService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
-}
-
-class MmsReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        // MMS-Unterstützung folgt in einer späteren Version. Diese Komponente
-        // ist nötig, damit Android Leo`s Messenger als SMS-App anbieten kann.
-    }
 }
 
 class SmsReceiver : BroadcastReceiver() {
@@ -236,6 +241,7 @@ private const val PREFS_FARBE_EMPFANG = "farbe_empfang"
 private const val PREFS_FARBE_GESENDET = "farbe_gesendet"
 private const val PREFS_FARBE_UEBERSICHT = "farbe_uebersicht"
 private const val PREFS_DESIGN = "einstellung_design"
+private const val PREFS_CHAT_ANIMATION = "chat_oeffnen_animation"
 private const val PREFS_SCHRIFTGROESSE = "schriftgroesse"
 private const val PREFS_PAPIERKORB = "papierkorb_chats"
 private const val PREFS_SORTIERUNG = "chat_sortierung"
@@ -282,7 +288,7 @@ private fun markiereUngelesen(context: Context, telefon: String) {
     set.add(n)
     prefs.edit().putStringSet(PREFS_UNREAD_PHONES, set).apply()
 }
-private const val ACTION_SMS_CHANGED = "at.leosnet.leosmessenger.SMS_CHANGED"
+const val ACTION_SMS_CHANGED = "at.leosnet.leosmessenger.SMS_CHANGED"
 
 private fun notifyBool(context: Context, key: String, standard: Boolean = true): Boolean =
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(key, standard)
@@ -378,6 +384,11 @@ private fun ladeDesign(context: Context): String =
 private fun speichereDesign(context: Context, wert: String) {
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(PREFS_DESIGN, wert).apply()
 }
+private fun ladeChatAnimation(context: Context): String =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREFS_CHAT_ANIMATION, "Seitlich") ?: "Seitlich"
+private fun speichereChatAnimation(context: Context, wert: String) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(PREFS_CHAT_ANIMATION, wert).apply()
+}
 
 private fun farbeAuswahl(name: String): Color = when (name) {
     "Weiß" -> Color(0xFFF5F5F5)
@@ -406,12 +417,12 @@ private fun kontrastFarbe(hintergrund: Color): Color {
 private fun sekundaerTextFarbe(hintergrund: Color): Color =
     kontrastFarbe(hintergrund).copy(alpha = 0.72f)
 
-private fun ladeChats(context: Context): List<Chat> {
+fun ladeChats(context: Context): List<Chat> {
     val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     val gespeichert = prefs.getString(PREFS_CHATS, null)
 
     if (gespeichert == null) {
-        // V1.6.2: Keine künstlichen Test-Chats mehr bei einer Neuinstallation.
+        // V1.7.0: Keine künstlichen Test-Chats mehr bei einer Neuinstallation.
         return emptyList()
     }
 
@@ -430,7 +441,9 @@ private fun ladeChats(context: Context): List<Chat> {
                                 text = n.getString("text"),
                                 zeitMillis = n.getLong("zeitMillis"),
                                 vonMir = n.getBoolean("vonMir"),
-                                status = n.optInt("status", 2)
+                                status = n.optInt("status", 2),
+                                mmsBildUri = n.optString("mmsBildUri", "").takeIf { it.isNotBlank() },
+                                mmsMime = n.optString("mmsMime", "").takeIf { it.isNotBlank() }
                             )
                         )
                     }
@@ -444,7 +457,7 @@ private fun ladeChats(context: Context): List<Chat> {
     }
 }
 
-private fun speichereChats(context: Context, chats: List<Chat>) {
+fun speichereChats(context: Context, chats: List<Chat>) {
     val chatArray = JSONArray()
     chats.forEach { chat ->
         val msgArray = JSONArray()
@@ -456,6 +469,8 @@ private fun speichereChats(context: Context, chats: List<Chat>) {
                     put("zeitMillis", n.zeitMillis)
                     put("vonMir", n.vonMir)
                     put("status", n.status)
+                    put("mmsBildUri", n.mmsBildUri ?: "")
+                    put("mmsMime", n.mmsMime ?: "")
                 }
             )
         }
@@ -479,6 +494,7 @@ private fun chatListeAlsJson(chats: List<Chat>): String {
         val ma = JSONArray()
         c.nachrichten.forEach { n -> ma.put(JSONObject().apply {
             put("id", n.id); put("text", n.text); put("zeitMillis", n.zeitMillis); put("vonMir", n.vonMir); put("status", n.status)
+            put("mmsBildUri", n.mmsBildUri ?: ""); put("mmsMime", n.mmsMime ?: "")
         }) }
         a.put(JSONObject().apply {
             put("id", c.id); put("name", c.name); put("kuerzel", c.kuerzel); put("telefon", c.telefon); put("nachrichten", ma)
@@ -496,7 +512,12 @@ private fun chatListeAusJson(json: String?): List<Chat> {
                 val ms=buildList {
                     for(j in 0 until ma.length()) {
                         val n=ma.getJSONObject(j)
-                        add(Nachricht(n.getLong("id"),n.getString("text"),n.getLong("zeitMillis"),n.getBoolean("vonMir"),n.optInt("status",2)))
+                        add(Nachricht(
+                            n.getLong("id"), n.getString("text"), n.getLong("zeitMillis"),
+                            n.getBoolean("vonMir"), n.optInt("status", 2),
+                            n.optString("mmsBildUri", "").takeIf { it.isNotBlank() },
+                            n.optString("mmsMime", "").takeIf { it.isNotBlank() }
+                        ))
                     }
                 }
                 add(Chat(c.getLong("id"),c.getString("name"),c.getString("kuerzel"),ms,c.optString("telefon","")))
@@ -627,6 +648,94 @@ private fun speichereGesendeteSmsImSystem(context: Context, telefon: String, tex
     } catch (_: Exception) { }
 }
 
+fun importiereSystemMms(context: Context, bestehend: List<Chat>): List<Chat> {
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
+        return bestehend
+    }
+
+    val chats = bestehend.toMutableList()
+    try {
+        val uri = Uri.parse("content://mms")
+        val projection = arrayOf("_id", "date", "msg_box")
+        context.contentResolver.query(uri, projection, null, null, "date ASC")?.use { cursor ->
+            val idIx = cursor.getColumnIndexOrThrow("_id")
+            val dateIx = cursor.getColumnIndexOrThrow("date")
+            val boxIx = cursor.getColumnIndexOrThrow("msg_box")
+
+            while (cursor.moveToNext()) {
+                val mmsId = cursor.getLong(idIx)
+                val zeit = cursor.getLong(dateIx) * 1000L
+                val box = cursor.getInt(boxIx)
+                val vonMir = box == 2 || box == 4 || box == 5 || box == 6
+
+                var nummer = ""
+                context.contentResolver.query(
+                    Uri.parse("content://mms/$mmsId/addr"),
+                    arrayOf("address", "type"), null, null, null
+                )?.use { ac ->
+                    val aIx = ac.getColumnIndex("address")
+                    val tIx = ac.getColumnIndex("type")
+                    while (ac.moveToNext()) {
+                        val type = if (tIx >= 0) ac.getInt(tIx) else 0
+                        val adr = if (aIx >= 0) ac.getString(aIx).orEmpty() else ""
+                        if ((!vonMir && type == 137) || (vonMir && type == 151)) {
+                            if (adr.isNotBlank() && adr != "insert-address-token") {
+                                nummer = adr
+                                break
+                            }
+                        }
+                    }
+                }
+                if (nummer.isBlank()) continue
+
+                var text = ""
+                var bildUri: String? = null
+                var bildMime: String? = null
+                context.contentResolver.query(
+                    Uri.parse("content://mms/$mmsId/part"),
+                    arrayOf("_id", "ct", "text"), null, null, null
+                )?.use { pc ->
+                    val pIdIx = pc.getColumnIndex("_id")
+                    val ctIx = pc.getColumnIndex("ct")
+                    val txIx = pc.getColumnIndex("text")
+                    while (pc.moveToNext()) {
+                        val partId = if (pIdIx >= 0) pc.getLong(pIdIx) else -1L
+                        val ct = if (ctIx >= 0) pc.getString(ctIx).orEmpty() else ""
+                        if (ct == "text/plain") {
+                            val direct = if (txIx >= 0) pc.getString(txIx).orEmpty() else ""
+                            if (direct.isNotBlank()) text = direct
+                            else if (partId >= 0) {
+                                try {
+                                    context.contentResolver.openInputStream(Uri.parse("content://mms/part/$partId"))?.bufferedReader()?.use { br ->
+                                        text = br.readText()
+                                    }
+                                } catch (_: Exception) { }
+                            }
+                        } else if (ct.startsWith("image/") && bildUri == null && partId >= 0) {
+                            bildUri = "content://mms/part/$partId"
+                            bildMime = ct
+                        }
+                    }
+                }
+
+                if (text.isBlank() && bildUri == null) continue
+                val localId = -(9_000_000_000L + mmsId * 10L + if (vonMir) 2L else 1L)
+                var ci = chats.indexOfFirst { gleicheTelefonnummer(it.telefon, nummer) }
+                if (ci < 0) {
+                    val name = findeKontaktName(context, nummer) ?: nummer
+                    chats.add(Chat(-(kotlin.math.abs(nummer.hashCode().toLong()) + 20_000L), name, kuerzelAusName(name), emptyList(), nummer))
+                    ci = chats.lastIndex
+                }
+                if (chats[ci].nachrichten.none { it.id == localId }) {
+                    val neu = Nachricht(localId, text, zeit, vonMir, 2, bildUri, bildMime)
+                    chats[ci] = chats[ci].copy(nachrichten = (chats[ci].nachrichten + neu).sortedBy { it.zeitMillis })
+                }
+            }
+        }
+    } catch (_: Exception) { }
+    return chats.sortedByDescending { it.nachrichten.maxOfOrNull { n -> n.zeitMillis } ?: 0L }
+}
+
 @Composable
 fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbeitet: () -> Unit = {}) {
     var standardSms by remember { mutableStateOf(istStandardSmsApp(context)) }
@@ -642,13 +751,34 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                 istStandardSmsApp(context) &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
             ) {
-                val synchronisiert = importiereSystemSms(context, ladeChats(context), meldungAnzeigen = false)
+                val smsSync = importiereSystemSms(context, ladeChats(context), meldungAnzeigen = false)
+                val synchronisiert = importiereSystemMms(context, smsSync)
                 chats.clear()
                 chats.addAll(synchronisiert)
                 val mitNamen = aktualisiereKontaktNamen(context, chats)
                 chats.clear()
                 chats.addAll(mitNamen)
                 speichereChats(context, chats)
+            }
+
+            // V1.7.0: Nach Rückkehr aus der Android-Kontakterstellung die
+            // Kontaktnamen unabhängig vom SMS-Import erneut einlesen.
+            // Ein kurzer zweiter Durchlauf fängt Geräte ab, bei denen der
+            // ContactsProvider den neuen Kontakt erst leicht verzögert liefert.
+            if (event == Lifecycle.Event.ON_RESUME &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+            ) {
+                fun kontaktNamenNeuEinlesen() {
+                    val mitNamen = aktualisiereKontaktNamen(context, chats)
+                    chats.clear()
+                    chats.addAll(mitNamen)
+                    speichereChats(context, chats)
+                }
+
+                kontaktNamenNeuEinlesen()
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    kontaktNamenNeuEinlesen()
+                }, 400)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -805,6 +935,7 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
     var farbeGesendet by remember { mutableStateOf(ladeEinzelFarbe(context, PREFS_FARBE_GESENDET, "Gelb")) }
     var farbeUebersicht by remember { mutableStateOf(ladeEinzelFarbe(context, PREFS_FARBE_UEBERSICHT, farbName)) }
     var designName by remember { mutableStateOf(ladeDesign(context)) }
+    var chatAnimation by remember { mutableStateOf(ladeChatAnimation(context)) }
     val akzentFarbe = farbeAuswahl(farbeUebersicht)
 
     // V1.1.7: Aufrufe aus Kontakte/Telefon mit sms: oder smsto: direkt in den passenden Chat leiten.
@@ -850,7 +981,10 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
         }
     }
 
-    if (offenerChat == null) {
+    // V1.7.0: Die Übersicht bleibt immer vollständig hinter dem Chat bestehen.
+    // Dadurch gleitet/blendet der Chat über der echten Übersicht ein, statt über
+    // einem leeren/hellen Zwischenframe.
+    Box(modifier = Modifier.fillMaxSize()) {
         ChatUebersicht(
             chats = chats,
             onChatClick = { offenerChatId = it.id },
@@ -866,14 +1000,15 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                 if (!lesenErlaubt) {
                     Toast.makeText(context, "SMS-Leseberechtigung fehlt.", Toast.LENGTH_LONG).show()
                 } else {
-                    val neu = importiereSystemSms(context, ladeChats(context))
+                    val smsNeu = importiereSystemSms(context, ladeChats(context))
+                    val neu = importiereSystemMms(context, smsNeu)
                     chats.clear()
                     chats.addAll(neu)
+                    speichereChats(context, chats)
                 }
             },
             onBearbeiten = { bearbeitenChat = it },
             onLoeschen = { chat ->
-                // Nur ein Papierkorb-Eintrag pro Telefonnummer.
                 papierkorb.removeAll { gleicheTelefonnummer(it.telefon, chat.telefon) }
                 papierkorb.add(0, chat)
                 chats.removeAll { it.id == chat.id || gleicheTelefonnummer(it.telefon, chat.telefon) }
@@ -881,9 +1016,14 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                 speicherePapierkorb(context, papierkorb)
             }
         )
-    } else {
-        BackHandler { offenerChatId = null }
-        ChatAnsicht(
+
+        if (offenerChat != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(50f)
+            ) {
+                ChatAnsicht(
             chat = offenerChat,
             akzentFarbe = akzentFarbe,
             designName = designName,
@@ -891,7 +1031,17 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             farbeGesendet = farbeAuswahl(farbeGesendet),
             schriftgroesse = schriftgroesse,
             empfangsAnimationId = empfangsAnimationId,
+            oeffnenAnimation = chatAnimation,
             onZurueck = { offenerChatId = null },
+            onKontaktAktualisieren = {
+                val index = chats.indexOfFirst { it.id == offenerChat.id }
+                if (index >= 0) {
+                    findeKontaktName(context, chats[index].telefon)?.takeIf { it.isNotBlank() }?.let { name ->
+                        chats[index] = chats[index].copy(name = name, kuerzel = kuerzelAusName(name))
+                        speichereChats(context, chats)
+                    }
+                }
+            },
             onNachrichtLoeschen = { nachricht ->
                 val index = chats.indexOfFirst { it.id == offenerChat.id }
                 if (index >= 0) {
@@ -901,8 +1051,13 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                     speichereChats(context, chats)
                 }
             },
-            onNachrichtSenden = { text ->
-                if (sendeSms(context, offenerChat.telefon, text)) {
+            onNachrichtSenden = { text, bildUri ->
+                val erfolgreich = if (bildUri != null) {
+                    sendeMms(context, offenerChat.telefon, text, bildUri)
+                } else {
+                    sendeSms(context, offenerChat.telefon, text)
+                }
+                if (erfolgreich) {
                     val index = chats.indexOfFirst { it.id == offenerChat.id }
                     if (index >= 0) {
                         val jetzt = System.currentTimeMillis()
@@ -911,17 +1066,24 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                             text = text,
                             zeitMillis = jetzt,
                             vonMir = true,
-                            status = 1
+                            status = 1,
+                            mmsBildUri = bildUri?.toString(),
+                            mmsMime = bildUri?.let { context.contentResolver.getType(it) ?: "image/*" }
                         )
-                        speichereGesendeteSmsImSystem(context, offenerChat.telefon, text, jetzt)
+                        if (bildUri == null) {
+                            speichereGesendeteSmsImSystem(context, offenerChat.telefon, text, jetzt)
+                        }
                         chats[index] = chats[index].copy(
                             nachrichten = chats[index].nachrichten + neu
                         )
                         speichereChats(context, chats)
                     }
                 }
+                erfolgreich
             }
-        )
+                )
+            }
+        }
     }
 
     if (neuerChatDialog) {
@@ -1030,7 +1192,7 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                     Text("Einstellungen", fontWeight = FontWeight.Bold)
                     Text("Unter Einstellungen kannst du Farben, Sprechblasen, Schriftgröße und Benachrichtigungen anpassen. Über „Sortierung“ im Hauptmenü ordnest du Chats nach Zeit oder Name.")
                     Text("SMS-Verlauf", fontWeight = FontWeight.Bold)
-                    Text("Mit „SMS-Verlauf neu einlesen“ kannst du den Android-SMS-Speicher erneut synchronisieren.")
+                    Text("Mit „SMS/MMS-Verlauf neu einlesen“ kannst du den Android-SMS-Speicher erneut synchronisieren.")
                 }
             },
             confirmButton = { TextButton(onClick = { hilfeOffen = false }) { Text("OK") } }
@@ -1043,6 +1205,7 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             aktuelleFarbeGesendet = farbeGesendet,
             aktuelleFarbeUebersicht = farbeUebersicht,
             aktuellesDesign = designName,
+            aktuelleChatAnimation = chatAnimation,
             aktuelleSchriftgroesse = schriftgroesse,
             notifyEnabledStart = notifyBool(context, PREFS_NOTIFY),
             notifyPopupStart = notifyBool(context, PREFS_NOTIFY_POPUP),
@@ -1050,12 +1213,13 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             notifyVibrateStart = notifyBool(context, PREFS_NOTIFY_VIBRATE),
             notifyPreviewStart = notifyBool(context, PREFS_NOTIFY_PREVIEW),
             onAbbrechen = { einstellungenOffen = false },
-            onSpeichern = { empfang, gesendet, uebersicht, design, textSize, nEnabled, nPopup, nSound, nVibrate, nPreview ->
+            onSpeichern = { empfang, gesendet, uebersicht, design, animation, textSize, nEnabled, nPopup, nSound, nVibrate, nPreview ->
                 farbeEmpfang = empfang
                 farbeGesendet = gesendet
                 farbeUebersicht = uebersicht
                 farbName = uebersicht
                 designName = design
+                chatAnimation = animation
                 schriftgroesse = textSize
                 speichereSchriftgroesse(context, textSize)
                 speichereEinzelFarbe(context, PREFS_FARBE_EMPFANG, empfang)
@@ -1063,6 +1227,7 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                 speichereEinzelFarbe(context, PREFS_FARBE_UEBERSICHT, uebersicht)
                 speichereFarbe(context, uebersicht)
                 speichereDesign(context, design)
+                speichereChatAnimation(context, animation)
                 setNotifyBool(context, PREFS_NOTIFY, nEnabled)
                 setNotifyBool(context, PREFS_NOTIFY_POPUP, nPopup)
                 setNotifyBool(context, PREFS_NOTIFY_SOUND, nSound)
@@ -1116,6 +1281,33 @@ private fun findeKontaktName(context: Context, nummer: String): String? {
             }
         } catch (_: Exception) { }
     }
+
+    // V1.7.0: Fallback für Geräte/Kontakte, bei denen PhoneLookup einen gerade
+    // neu angelegten Kontakt wegen abweichender Schreibweise nicht sofort findet.
+    try {
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+        context.contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            projection,
+            null,
+            null,
+            null
+        )?.use { c ->
+            val nameIndex = c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+            val numberIndex = c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+            while (c.moveToNext()) {
+                val kontaktNummer = if (numberIndex >= 0) c.getString(numberIndex).orEmpty() else ""
+                if (gleicheTelefonnummer(nummer, kontaktNummer)) {
+                    val name = if (nameIndex >= 0) c.getString(nameIndex) else null
+                    if (!name.isNullOrBlank()) return name
+                }
+            }
+        }
+    } catch (_: Exception) { }
+
     return null
 }
 
@@ -1251,6 +1443,7 @@ private fun EinstellungenDialog(
     aktuelleFarbeGesendet: String,
     aktuelleFarbeUebersicht: String,
     aktuellesDesign: String,
+    aktuelleChatAnimation: String,
     aktuelleSchriftgroesse: Int,
     notifyEnabledStart: Boolean,
     notifyPopupStart: Boolean,
@@ -1258,7 +1451,7 @@ private fun EinstellungenDialog(
     notifyVibrateStart: Boolean,
     notifyPreviewStart: Boolean,
     onAbbrechen: () -> Unit,
-    onSpeichern: (String, String, String, String, Int, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
+    onSpeichern: (String, String, String, String, String, Int, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     val farben = listOf(
         "Weiß", "Hellgrau", "Grau", "Dunkelgrau",
@@ -1266,10 +1459,12 @@ private fun EinstellungenDialog(
         "Hellgrün", "Grün", "Gelb", "Orange", "Rot", "Rosa", "Violett"
     )
     val designs = listOf("Wie jetzt", "Sprechblasen")
+    val chatAnimationen = listOf("Keine", "Seitlich", "Von unten", "Zoom", "Überblenden", "Zoom + Überblenden")
     var empfang by remember(aktuelleFarbeEmpfang) { mutableStateOf(aktuelleFarbeEmpfang) }
     var gesendet by remember(aktuelleFarbeGesendet) { mutableStateOf(aktuelleFarbeGesendet) }
     var uebersicht by remember(aktuelleFarbeUebersicht) { mutableStateOf(aktuelleFarbeUebersicht) }
     var design by remember(aktuellesDesign) { mutableStateOf(aktuellesDesign) }
+    var chatAnimation by remember(aktuelleChatAnimation) { mutableStateOf(aktuelleChatAnimation) }
     var textSize by remember(aktuelleSchriftgroesse) { mutableIntStateOf(aktuelleSchriftgroesse) }
     var nEnabled by remember { mutableStateOf(notifyEnabledStart) }
     var nPopup by remember { mutableStateOf(notifyPopupStart) }
@@ -1313,6 +1508,14 @@ private fun EinstellungenDialog(
                     }
                 }
                 HorizontalDivider()
+                Text("Chat öffnen – Animation", fontWeight = FontWeight.Bold)
+                chatAnimationen.forEach { eintrag ->
+                    Row(Modifier.fillMaxWidth().clickable { chatAnimation = eintrag }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = chatAnimation == eintrag, onClick = { chatAnimation = eintrag })
+                        Text(eintrag)
+                    }
+                }
+                HorizontalDivider()
                 Text("Schriftgröße", fontWeight = FontWeight.Bold)
                 Text("$textSize pt")
                 Slider(
@@ -1337,7 +1540,7 @@ private fun EinstellungenDialog(
                 Schalter("Nachrichtenvorschau", nPreview, nEnabled) { nPreview = it }
             }
         },
-        confirmButton = { TextButton(onClick = { onSpeichern(empfang, gesendet, uebersicht, design, textSize, nEnabled, nPopup, nSound, nVibrate, nPreview) }) { Text("Speichern") } },
+        confirmButton = { TextButton(onClick = { onSpeichern(empfang, gesendet, uebersicht, design, chatAnimation, textSize, nEnabled, nPopup, nSound, nVibrate, nPreview) }) { Text("Speichern") } },
         dismissButton = { TextButton(onClick = onAbbrechen) { Text("Abbrechen") } }
     )
 }
@@ -1381,11 +1584,11 @@ private fun ChatUebersicht(
         val anzahlNachrichten = chats.sumOf { it.nachrichten.size }
         AlertDialog(
             onDismissRequest = { infoOffen = false },
-            title = { Text("Leo`s Messenger V1.6.2") },
+            title = { Text("Leo`s Messenger V2.0.5") },
             text = {
                 Text(
                     "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
-                        "Neu: Der SMS-Verlauf wird beim Öffnen bzw. Zurückkehren zur App automatisch mit dem Android-SMS-Speicher synchronisiert."
+                        "Neu in V2.0.5: Die komplette Eingabezeile wurde weiter abgeflacht und platzsparender aufgebaut. MMS mit Bildanhang senden und empfangen bleibt enthalten; Bilder werden direkt im Chat angezeigt und können groß geöffnet werden."
                 )
             },
             confirmButton = {
@@ -1467,7 +1670,7 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("SMS-Verlauf neu einlesen") },
+                                text = { Text("SMS/MMS-Verlauf neu einlesen") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     onSmsNeuEinlesen()
@@ -1485,7 +1688,7 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Info zu V1.6.2") },
+                                text = { Text("Info zu V2.0.5") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     infoOffen = true
@@ -1734,7 +1937,7 @@ private fun ChatZeile(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                text = letzte?.text ?: "Noch keine Nachrichten",
+                text = letzte?.let { if (it.text.isNotBlank()) it.text else if (!it.mmsBildUri.isNullOrBlank()) "📷 Bild (MMS)" else "Nachricht" } ?: "Noch keine Nachrichten",
                 fontSize = 14.sp,
                 fontWeight = if (ungelesen) FontWeight.SemiBold else FontWeight.Normal,
                 color = if (ungelesen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1779,13 +1982,64 @@ private fun ChatAnsicht(
     farbeGesendet: Color,
     schriftgroesse: Int,
     empfangsAnimationId: Long,
+    oeffnenAnimation: String,
     onZurueck: () -> Unit,
+    onKontaktAktualisieren: () -> Unit,
     onNachrichtLoeschen: (Nachricht) -> Unit,
-    onNachrichtSenden: (String) -> Unit
+    onNachrichtSenden: (String, Uri?) -> Boolean
 ) {
     var eingabe by remember(chat.id) { mutableStateOf("") }
+    var anhangUri by remember(chat.id) { mutableStateOf<Uri?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val bildLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+            anhangUri = uri
+        }
+    }
+
+    // V1.7.0: Die Kontakterstellung mit Ergebnis starten. Beim Zurückkehren
+    // wird der gerade angelegte Name gezielt für den offenen Chat neu gelesen.
+    val kontaktErstellenLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        onKontaktAktualisieren()
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            onKontaktAktualisieren()
+        }, 500)
+    }
+
     val listState = rememberLazyListState()
+    var chatMenueOffen by remember { mutableStateOf(false) }
+
+    fun kontaktOeffnen() {
+        if (chat.telefon.isBlank()) return
+        try {
+            val lookupUri = Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                Uri.encode(chat.telefon)
+            )
+            context.contentResolver.query(
+                lookupUri,
+                arrayOf(
+                    ContactsContract.PhoneLookup.LOOKUP_KEY,
+                    ContactsContract.PhoneLookup._ID
+                ),
+                null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val lookupKey = cursor.getString(0)
+                    val contactId = cursor.getLong(1)
+                    val contactUri = ContactsContract.Contacts.getLookupUri(contactId, lookupKey)
+                    context.startActivity(Intent(Intent.ACTION_VIEW, contactUri))
+                } else {
+                    Toast.makeText(context, "Kontakt nicht gefunden.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (_: Exception) {
+            Toast.makeText(context, "Kontakt konnte nicht geöffnet werden.", Toast.LENGTH_SHORT).show()
+        }
+    }
     val scope = rememberCoroutineScope()
     var overlayNachricht by remember(chat.id) { mutableStateOf<Nachricht?>(null) }
     var overlaySichtbar by remember(chat.id) { mutableStateOf(false) }
@@ -1850,16 +2104,81 @@ private fun ChatAnsicht(
         }
     }
 
+    var chatSichtbar by remember(chat.id) { mutableStateOf(false) }
+    val chatAnimProgress by animateFloatAsState(
+        targetValue = if (chatSichtbar || oeffnenAnimation == "Keine") 1f else 0f,
+        animationSpec = tween(620, easing = FastOutSlowInEasing),
+        label = "chatOeffnenAnimation"
+    )
+    LaunchedEffect(chat.id, oeffnenAnimation) {
+        chatSichtbar = false
+        if (oeffnenAnimation == "Keine") chatSichtbar = true
+        else {
+            delay(90)
+            chatSichtbar = true
+        }
+    }
+
+    var zurueckLaeuft by remember(chat.id) { mutableStateOf(false) }
+
+    fun animiertZurueck() {
+        if (zurueckLaeuft) return
+        zurueckLaeuft = true
+        if (oeffnenAnimation == "Keine") {
+            onZurueck()
+        } else {
+            // Erst den Chat über der weiterhin sichtbaren Übersicht hinaus animieren.
+            chatSichtbar = false
+            val rueckDauer = when (oeffnenAnimation) {
+                "Überblenden", "Zoom", "Zoom + Überblenden" -> 680L
+                else -> 580L
+            }
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                onZurueck()
+            }, rueckDauer)
+        }
+    }
+
+    // V1.7.0: Auch Android-Zurück / Zurück-Geste zuerst animieren.
+    BackHandler(enabled = true) { animiertZurueck() }
+
     Scaffold(
+        modifier = Modifier.graphicsLayer {
+            when (oeffnenAnimation) {
+                "Seitlich" -> translationX = (1f - chatAnimProgress) * size.width * 1.15f
+                "Von unten" -> translationY = (1f - chatAnimProgress) * size.height * 1.15f
+                "Zoom" -> {
+                    // V1.7.0: Deutlich sichtbarer Zoom in beide Richtungen.
+                    scaleX = 0.76f + 0.24f * chatAnimProgress
+                    scaleY = 0.76f + 0.24f * chatAnimProgress
+                    alpha = 0.72f + 0.28f * chatAnimProgress
+                }
+                "Überblenden" -> {
+                    // Die Übersicht liegt darunter und wird beim Zurückgehen
+                    // während des Ausblendens kontinuierlich freigelegt.
+                    alpha = chatAnimProgress
+                }
+                "Zoom + Überblenden" -> {
+                    scaleX = 0.76f + 0.24f * chatAnimProgress
+                    scaleY = 0.76f + 0.24f * chatAnimProgress
+                    alpha = chatAnimProgress
+                }
+            }
+        },
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    TextButton(onClick = onZurueck) {
+                    TextButton(onClick = { animiertZurueck() }) {
                         Text("‹", fontSize = 32.sp)
                     }
                 },
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.clickable(enabled = chat.telefon.isNotBlank()) {
+                            kontaktOeffnen()
+                        },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Box(
                             modifier = Modifier.size(40.dp).background(akzentFarbe, CircleShape),
                             contentAlignment = Alignment.Center
@@ -1875,62 +2194,153 @@ private fun ChatAnsicht(
                 },
                 actions = {
                     if (chat.telefon.isNotBlank()) {
-                        val unbekannt = chat.name == chat.telefon || chat.name.filter { it.isDigit() } == chat.telefon.filter { it.isDigit() }
-                        if (unbekannt) {
-                            TextButton(
-                                onClick = {
-                                    val intent = Intent(ContactsContract.Intents.Insert.ACTION).apply {
-                                        type = ContactsContract.RawContacts.CONTENT_TYPE
-                                        putExtra(ContactsContract.Intents.Insert.PHONE, chat.telefon)
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(intent)
+                        val unbekannt = chat.name == chat.telefon ||
+                            chat.name.filter { it.isDigit() } == chat.telefon.filter { it.isDigit() }
+
+                        Box {
+                            TextButton(onClick = { chatMenueOffen = true }) {
+                                Text("⋮", fontSize = 24.sp)
+                            }
+                            DropdownMenu(
+                                expanded = chatMenueOffen,
+                                onDismissRequest = { chatMenueOffen = false }
+                            ) {
+                                if (!unbekannt) {
+                                    DropdownMenuItem(
+                                        text = { Text("Kontakt öffnen") },
+                                        onClick = {
+                                            chatMenueOffen = false
+                                            kontaktOeffnen()
+                                        }
+                                    )
+                                } else {
+                                    DropdownMenuItem(
+                                        text = { Text("Kontakt erstellen") },
+                                        onClick = {
+                                            chatMenueOffen = false
+                                            val intent = Intent(ContactsContract.Intents.Insert.ACTION).apply {
+                                                type = ContactsContract.RawContacts.CONTENT_TYPE
+                                                putExtra(ContactsContract.Intents.Insert.PHONE, chat.telefon)
+                                            }
+                                            kontaktErstellenLauncher.launch(intent)
+                                        }
+                                    )
                                 }
-                            ) { Text("Kontakt +") }
-                        }
-                        TextButton(
-                            onClick = {
-                                val nummer = chat.telefon.filter { it.isDigit() || it == '+' }
-                                context.startActivity(
-                                    Intent(Intent.ACTION_DIAL, Uri.parse("tel:$nummer")).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                DropdownMenuItem(
+                                    text = { Text("Anrufen") },
+                                    onClick = {
+                                        chatMenueOffen = false
+                                        val nummer = chat.telefon.filter { it.isDigit() || it == '+' }
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_DIAL, Uri.parse("tel:$nummer"))
+                                        )
                                     }
                                 )
                             }
-                        ) { Text("Anrufen") }
+                        }
                     }
                 }
             )
         },
         bottomBar = {
             Surface(tonalElevation = 4.dp) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp),
-                    verticalAlignment = Alignment.Bottom
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
                 ) {
-                    OutlinedTextField(
-                        value = eingabe,
-                        onValueChange = { eingabe = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("Nachricht") },
-                        maxLines = 5,
-                        shape = RoundedCornerShape(22.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            val text = eingabe.trim()
-                            if (text.isNotEmpty()) {
-                                onNachrichtSenden(text)
-                                eingabe = ""
-                                scope.launch {
-                                    val ziel = chat.nachrichten.size
-                                    if (ziel >= 0) listState.animateScrollToItem(ziel)
+                    if (anhangUri != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            MmsBildVorschau(anhangUri.toString(), Modifier.size(48.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Bild für MMS ausgewählt", modifier = Modifier.weight(1f), fontSize = 13.sp)
+                            TextButton(onClick = { anhangUri = null }) { Text("Entfernen") }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(42.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clickable { bildLauncher.launch(arrayOf("image/*")) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("📎", fontSize = 20.sp)
+                        }
+
+                        Spacer(Modifier.width(3.dp))
+
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp),
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+                            color = Color.Transparent
+                        ) {
+                            BasicTextField(
+                                value = eingabe,
+                                onValueChange = { eingabe = it },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 14.dp),
+                                singleLine = true,
+                                textStyle = LocalTextStyle.current.copy(
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 16.sp
+                                ),
+                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                decorationBox = { innerTextField ->
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        if (eingabe.isEmpty()) {
+                                            Text(
+                                                if (anhangUri == null) "Nachricht" else "Text zur MMS",
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 16.sp
+                                            )
+                                        }
+                                        innerTextField()
+                                    }
                                 }
-                            }
-                        },
-                        modifier = Modifier.height(56.dp)
-                    ) { Text("Senden") }
+                            )
+                        }
+
+                        Spacer(Modifier.width(3.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                .clickable {
+                                    val text = eingabe.trim()
+                                    val bild = anhangUri
+                                    if (text.isNotEmpty() || bild != null) {
+                                        if (onNachrichtSenden(text, bild)) {
+                                            eingabe = ""
+                                            anhangUri = null
+                                            scope.launch {
+                                                val ziel = chat.nachrichten.size
+                                                if (ziel >= 0) listState.animateScrollToItem(ziel)
+                                            }
+                                        }
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(if (anhangUri == null) "➤" else "M", fontSize = 16.sp)
+                        }
+                    }
                 }
             }
         }
@@ -2230,13 +2640,22 @@ private fun NachrichtenInhalt(
             .background(blasenFarbe, form)
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
-        SelectionContainer {
-            Text(
-                nachricht.text,
-                fontSize = schriftgroesse.sp,
-                lineHeight = (schriftgroesse + 5).sp,
-                color = kontrastFarbe(blasenFarbe)
+        if (!nachricht.mmsBildUri.isNullOrBlank()) {
+            MmsBildVorschau(
+                uriText = nachricht.mmsBildUri,
+                modifier = Modifier.widthIn(max = 280.dp).heightIn(max = 280.dp)
             )
+            if (nachricht.text.isNotBlank()) Spacer(Modifier.height(6.dp))
+        }
+        if (nachricht.text.isNotBlank()) {
+            SelectionContainer {
+                Text(
+                    nachricht.text,
+                    fontSize = schriftgroesse.sp,
+                    lineHeight = (schriftgroesse + 5).sp,
+                    color = kontrastFarbe(blasenFarbe)
+                )
+            }
         }
         if (zeitInnen) {
             Spacer(Modifier.height(3.dp))
@@ -2283,6 +2702,43 @@ private fun NachrichtenZeitAussen(nachricht: Nachricht, blasenFarbe: Color) {
                 color = blasenFarbe,
                 fontWeight = FontWeight.Bold
             )
+        }
+    }
+}
+
+@Composable
+private fun MmsBildVorschau(uriText: String, modifier: Modifier = Modifier) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var gross by remember(uriText) { mutableStateOf(false) }
+    val bitmap = remember(uriText) {
+        try {
+            context.contentResolver.openInputStream(Uri.parse(uriText))?.use { BitmapFactory.decodeStream(it) }
+        } catch (_: Exception) { null }
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "MMS-Bild",
+            contentScale = ContentScale.Crop,
+            modifier = modifier.clip(RoundedCornerShape(12.dp)).clickable { gross = true }
+        )
+        if (gross) {
+            AlertDialog(
+                onDismissRequest = { gross = false },
+                confirmButton = { TextButton(onClick = { gross = false }) { Text("Schließen") } },
+                text = {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "MMS-Bild groß",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp)
+                    )
+                }
+            )
+        }
+    } else {
+        Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Text("📷 MMS-Bild", modifier = Modifier.padding(12.dp))
         }
     }
 }
