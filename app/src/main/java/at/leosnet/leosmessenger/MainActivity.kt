@@ -1584,11 +1584,11 @@ private fun ChatUebersicht(
         val anzahlNachrichten = chats.sumOf { it.nachrichten.size }
         AlertDialog(
             onDismissRequest = { infoOffen = false },
-            title = { Text("Leo`s Messenger V2.0.5") },
+            title = { Text("Leo`s Messenger V2.0.6") },
             text = {
                 Text(
                     "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
-                        "Neu in V2.0.5: Die komplette Eingabezeile wurde weiter abgeflacht und platzsparender aufgebaut. MMS mit Bildanhang senden und empfangen bleibt enthalten; Bilder werden direkt im Chat angezeigt und können groß geöffnet werden."
+                        "Neu in V2.0.6: Die untere Eingabeleiste erhält zusätzlichen Sicherheitsabstand zu den abgerundeten Displayrändern. Dadurch werden Büroklammer und Sende-Pfeil nicht mehr angeschnitten. MMS und die kompakte Eingabe bleiben unverändert erhalten."
                 )
             },
             confirmButton = {
@@ -1688,7 +1688,7 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Info zu V2.0.5") },
+                                text = { Text("Info zu V2.0.6") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     infoOffen = true
@@ -2247,7 +2247,7 @@ private fun ChatAnsicht(
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                        .padding(start = 10.dp, end = 10.dp, top = 1.dp, bottom = 3.dp)
                 ) {
                     if (anhangUri != null) {
                         Row(
