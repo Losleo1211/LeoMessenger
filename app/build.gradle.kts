@@ -17,8 +17,8 @@ android {
         minSdk = 24
         targetSdk = 36
 
-        versionCode = 212
-        versionName = "2.0.12"
+        versionCode = 216
+        versionName = "2.0.16"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -51,7 +51,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
-    // MMS-Unterstützung für LeosMessenger V2.0.12
+    // MMS-Unterstützung für LeosMessenger V2.0.13
     implementation("com.klinkerapps:android-smsmms:5.2.6")
 
     testImplementation(libs.junit)

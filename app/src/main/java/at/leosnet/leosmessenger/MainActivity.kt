@@ -101,7 +101,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * V2.0.12: Rich Content mit expliziter Gboard-MIME-Anmeldung.
+ * V2.0.15: Rich Content + stabile IME-Behandlung für Chat und Eingabezeile.
  * Gboard und andere IMEs sehen dadurch bereits beim Öffnen des Eingabefeldes,
  * dass Leo's Messenger Bilder, GIFs und Sticker akzeptiert.
  */
@@ -1699,11 +1699,13 @@ private fun ChatUebersicht(
         val anzahlNachrichten = chats.sumOf { it.nachrichten.size }
         AlertDialog(
             onDismissRequest = { infoOffen = false },
-            title = { Text("Leo`s Messenger V2.0.6") },
+            title = { Text("Leo`s Messenger V${BuildConfig.VERSION_NAME}") },
             text = {
                 Text(
                     "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
-                        "Neu in V2.0.11: Gboard erhält die unterstützten Bild-MIME-Typen nun bei jedem Aufbau der InputConnection ausdrücklich über AndroidX und das native EditorInfo-Feld. Dadurch sollen GIF-, Sticker- und Bildfunktionen in Gboard zuverlässig aktiviert werden. Die korrigierte Eingabeleiste aus V2.0.10 bleibt erhalten."
+                        "Aktuelle Version: V${BuildConfig.VERSION_NAME}\n\n" +
+                        "SMS/MMS, Bildanhänge sowie Gboard-GIF-/Sticker-Unterstützung. " +
+                        "Die Eingabeleiste und der Nachrichtenbereich berücksichtigen die Bildschirmtastatur gemeinsam."
                 )
             },
             confirmButton = {
@@ -1803,7 +1805,7 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Info zu V2.0.8") },
+                                text = { Text("Info zu V${BuildConfig.VERSION_NAME}") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     infoOffen = true
@@ -2257,10 +2259,21 @@ private fun ChatAnsicht(
     // V1.7.0: Auch Android-Zurück / Zurück-Geste zuerst animieren.
     BackHandler(enabled = true) { animiertZurueck() }
 
-    // V2.0.12: Die Eingabeleiste wird über der IME verschoben statt mit IME-Padding
-    // künstlich höher gemacht. Das verhindert den großen Leerraum beim Fokussieren.
+    // V2.0.15: IME explizit behandeln. Die Eingabezeile wird nur optisch
+    // über die Tastatur verschoben; gleichzeitig wird der Chatbereich um
+    // exakt dieselbe Höhe verkleinert. So verschwinden keine Nachrichten
+    // unter Gboard und es entsteht kein großer Leerraum beim Fokussieren.
     val density = androidx.compose.ui.platform.LocalDensity.current
     val imeBottom = with(density) { WindowInsets.ime.getBottom(this).toDp() }
+    val navBottom = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+    val imeLift = (imeBottom - navBottom).coerceAtLeast(0.dp)
+
+    LaunchedEffect(imeLift, chat.nachrichten.size) {
+        if (imeLift > 0.dp && chat.nachrichten.isNotEmpty()) {
+            delay(80)
+            listState.animateScrollToItem(chat.nachrichten.lastIndex)
+        }
+    }
 
     Scaffold(
         modifier = Modifier.graphicsLayer {
@@ -2368,7 +2381,7 @@ private fun ChatAnsicht(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .offset(y = -imeBottom)
+                    .offset(y = -imeLift)
             ) {
                 Column(
                     Modifier
@@ -2492,6 +2505,7 @@ private fun ChatAnsicht(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .padding(bottom = imeLift)
                 .onGloballyPositioned { coords ->
                     chatBereichY = coords.positionInRoot().y
                 }
