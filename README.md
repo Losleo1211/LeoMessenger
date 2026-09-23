@@ -1,18 +1,24 @@
-# 💬 Leo's Messenger
+# 📱 Leo's Messenger – SMS & MMS für Android
 
-**Leo's Messenger** ist ein schlanker SMS-Messenger für Android mit besonderem Fokus auf einfache Bedienung, Datenschutz und frei markierbare Nachrichtentexte.
+**Ein schlanker Android-Messenger für SMS und MMS mit frei markierbaren Nachrichtentexten, eigener Chatverwaltung und moderner Oberfläche.**
 
-Ein wesentlicher Grund für die Entwicklung war eine Funktion, die bei vielen Messenger- und SMS-Apps fehlt oder nur umständlich möglich ist:
+Leo's Messenger wurde ursprünglich mit einem einfachen Ziel entwickelt:
 
-> **Beliebige Textstellen innerhalb einer SMS markieren und kopieren.**
+> **Nachricht öffnen → gewünschten Text markieren → kopieren.**
 
-Leo's Messenger wird unabhängig entwickelt und der Quellcode ist öffentlich einsehbar.
+Aus dieser Idee ist inzwischen ein **funktionsfähiger SMS- und MMS-Messenger für Android** entstanden.  
+Die App befindet sich weiterhin in aktiver Entwicklung und wird Schritt für Schritt um weitere Funktionen ergänzt und optimiert.
 
 ---
 
 ## 📱 Aktuelle Version
 
-**V1.6.2**
+**V2.0.5**
+
+Mit Version **2.0.5** wurde Leo's Messenger deutlich erweitert.
+
+Neu hinzugekommen ist die Unterstützung von **MMS mit Bildanhängen**.  
+SMS und MMS werden gemeinsam innerhalb derselben Unterhaltung dargestellt.
 
 Leo's Messenger wird laufend weiterentwickelt und auf realen Android-Geräten getestet.
 
@@ -24,35 +30,75 @@ Leo's Messenger wird laufend weiterentwickelt und auf realen Android-Geräten ge
 
 - SMS senden und empfangen
 - Verwendung als Standard-SMS-App unter Android
-- Vorhandenen SMS-Verlauf vom Smartphone einlesen
-- Automatische Synchronisierung neuer Nachrichten
+- vorhandenen SMS-Verlauf vom Smartphone einlesen
+- automatische Synchronisierung neuer Nachrichten
 - Empfang von SMS auch im Hintergrund
 - Benachrichtigungen bei neuen Nachrichten
 - Benachrichtigungston und Vibration
 - Vorschau eingehender Nachrichten
-- Ungelesene Chats werden deutlich hervorgehoben
+- ungelesene Chats werden deutlich hervorgehoben
 - Telefonnummern werden vorhandenen Kontakten zugeordnet
+- Nachrichtenstatus für gesendete Nachrichten
+- gemeinsame Darstellung von SMS und MMS im Chatverlauf
+
+---
+
+### 🖼️ MMS & Bildnachrichten
+
+Seit Version **2.0** unterstützt Leo's Messenger zusätzlich MMS.
+
+- Bilder als MMS versenden
+- empfangene MMS mit Bildern anzeigen
+- Bildauswahl direkt aus dem Chat
+- Bildvorschau vor dem Versenden
+- SMS und MMS gemeinsam in einer Unterhaltung
+- Bilder direkt im Nachrichtenverlauf anzeigen
+- Bilder vergrößert öffnen
+- MMS-Sendestatus anzeigen
+- automatische Größenanpassung von Bildern für den MMS-Versand
+- Text und Bild gemeinsam als MMS versenden
+
+> ⚠️ **Hinweis:**  
+> Der Versand und Empfang von MMS kann abhängig vom Mobilfunkanbieter, den APN-/MMS-Einstellungen, der Android-Version und dem verwendeten Gerät unterschiedlich funktionieren.
+
+---
 
 ### 📋 Texte markieren und kopieren
 
-Eine der Hauptfunktionen von Leo's Messenger:
+Eine der zentralen Funktionen von Leo's Messenger:
 
 **Beliebige Teile einer Nachricht können frei markiert und kopiert werden.**
 
-Es muss nicht die komplette SMS kopiert werden. Telefonnummern, Adressen, Codes, Namen oder einzelne Sätze können direkt ausgewählt werden.
+Es muss nicht die komplette Nachricht kopiert werden.
+
+So können zum Beispiel direkt ausgewählt werden:
+
+- Telefonnummern
+- Adressen
+- Codes
+- Namen
+- einzelne Wörter
+- einzelne Sätze
+- beliebige Textabschnitte
+
+---
 
 ### 🎨 Darstellung
 
 - Standard-Design
 - Sprechblasen-Design
-- Unterschiedliche Farben für gesendete und empfangene Nachrichten
-- Eigene Farbe für die Chatübersicht
-- Automatische Anpassung der Textfarbe an helle und dunkle Hintergründe
-- Einstellbare Schriftgröße
+- unterschiedliche Farben für gesendete und empfangene Nachrichten
+- eigene Farbe für die Chatübersicht
+- automatische Anpassung der Textfarbe an helle und dunkle Hintergründe
+- einstellbare Schriftgröße
 - Zeitangaben direkt neben den Nachrichten
 - Statusanzeige für gesendete Nachrichten
 - Animation beim Senden und Empfangen
-- Animiertes Löschen von Chats
+- animiertes Löschen von Chats
+- animierte Sortierung der Chatübersicht
+- kompakte Eingabezeile für mehr Platz im Nachrichtenverlauf
+
+---
 
 ### 📂 Chatverwaltung
 
@@ -60,29 +106,47 @@ Es muss nicht die komplette SMS kopiert werden. Telefonnummern, Adressen, Codes,
 - Chats umbenennen
 - Kontakte direkt aus Telefonnummern erstellen
 - Telefonnummer direkt aus einem Chat anrufen
-- Chatübersicht sortieren nach:
-  - Neueste zuerst
-  - Älteste zuerst
-  - Name A–Z
-  - Name Z–A
-- Einzelne Nachrichten löschen
+- vorhandene Kontakte automatisch erkennen
+- einzelne Nachrichten löschen
 - Chats in den Papierkorb verschieben
 - Chats aus dem Papierkorb wiederherstellen
-- Endgültiges Löschen aus dem Papierkorb
+- endgültiges Löschen aus dem Papierkorb
 
-Wird von einem Absender erneut eine SMS empfangen, dessen Chat sich noch im Papierkorb befindet, kann der bisherige Nachrichtenverlauf wieder dem aktiven Chat zugeordnet werden.
+### 🔃 Sortierung der Chatübersicht
+
+Die Chatübersicht kann sortiert werden nach:
+
+- Neueste zuerst
+- Älteste zuerst
+- Name A–Z
+- Name Z–A
+
+Wird von einem Absender erneut eine Nachricht empfangen, dessen Chat sich noch im Papierkorb befindet, kann der bisherige Nachrichtenverlauf wieder dem aktiven Chat zugeordnet werden.
 
 ---
 
 ## 🎯 Warum Leo's Messenger?
 
-Bei verschiedenen SMS-Apps ist es nicht oder nur umständlich möglich, einen bestimmten Teil einer Nachricht zu markieren und zu kopieren.
+Bei verschiedenen SMS- und Messenger-Apps ist es nicht oder nur umständlich möglich, einen bestimmten Teil einer Nachricht zu markieren und zu kopieren.
 
-Leo's Messenger wurde deshalb ursprünglich mit einem ganz einfachen Ziel entwickelt:
+Leo's Messenger wurde deshalb ursprünglich mit einem sehr einfachen Ziel entwickelt:
 
-**Nachricht öffnen → gewünschten Text markieren → kopieren.**
+> **Nachricht öffnen → gewünschten Text markieren → kopieren.**
 
-Aus dieser Idee ist inzwischen ein vollständiger SMS-Messenger mit eigener Chatverwaltung, Designs, Benachrichtigungen und weiteren Komfortfunktionen entstanden.
+Aus dieser Grundidee entstand Schritt für Schritt eine eigene Android-Messenger-App mit:
+
+- SMS
+- MMS
+- Bildnachrichten
+- Kontakterkennung
+- Chatverwaltung
+- Papierkorb
+- Designs
+- Benachrichtigungen
+- Animationen
+- individuell einstellbarer Darstellung
+
+Der Schwerpunkt liegt weiterhin auf einer **einfachen, übersichtlichen und direkten Bedienung**.
 
 ---
 
@@ -90,31 +154,57 @@ Aus dieser Idee ist inzwischen ein vollständiger SMS-Messenger mit eigener Chat
 
 Der Quellcode von **Leo's Messenger ist öffentlich einsehbar**.
 
-Damit können Anwender, Entwickler und Sicherheitsforscher nachvollziehen, welche Funktionen die App ausführt und welche Android-Berechtigungen dafür verwendet werden.
+Damit können Anwender, Entwickler und Sicherheitsforscher nachvollziehen:
+
+- welche Funktionen die App ausführt
+- welche Android-Berechtigungen benötigt werden
+- wie SMS und MMS verarbeitet werden
+- welche Daten lokal verarbeitet werden
 
 Leo's Messenger enthält:
 
-- **keine Werbung**
-- **kein integriertes Werbe-Tracking**
-- **keine absichtlich integrierten Schadfunktionen**
+- ✅ keine Werbung
+- ✅ kein integriertes Werbe-Tracking
+- ✅ keine verpflichtende Benutzerregistrierung
+- ✅ keine Cloud-Pflicht
+- ✅ keine absichtlich integrierten Schadfunktionen
 
-### ⚠️ Hinweis zu Sicherheitsprogrammen
+---
 
-Leo's Messenger benötigt als SMS-App weitreichende Android-Berechtigungen, unter anderem zum **Lesen, Empfangen und Senden von SMS** sowie für die **Zuordnung von Telefonnummern zu Kontakten**.
+## ⚠️ Hinweis zu Sicherheitsprogrammen
 
-Da die App derzeit als APK außerhalb des Google Play Stores bereitgestellt wird und diese sensiblen Berechtigungen benötigt, können einzelne Sicherheitsprogramme die App möglicherweise als verdächtig einstufen.
+Leo's Messenger benötigt als SMS- und MMS-App weitreichende Android-Berechtigungen.
 
-Eine solche Warnung sollte anhand der jeweiligen Erkennungsdetails und des hier veröffentlichten Quellcodes überprüft werden.
+Dazu gehören unter anderem Berechtigungen zum:
+
+- Lesen von SMS
+- Empfangen von SMS
+- Senden von SMS
+- Verarbeiten von MMS
+- Empfangen von WAP-Push-Nachrichten
+- Lesen von Kontakten
+- Anzeigen von Benachrichtigungen
+
+Da die App derzeit als APK außerhalb des Google Play Stores bereitgestellt wird und sensible Systemberechtigungen benötigt, können einzelne Sicherheitsprogramme die Anwendung möglicherweise besonders streng bewerten.
+
+Eine solche Warnung sollte anhand der jeweiligen Erkennungsdetails und des öffentlich einsehbaren Quellcodes überprüft werden.
 
 ---
 
 ## 🔐 Datenschutz
 
-Leo's Messenger ist als klassischer SMS-Messenger konzipiert.
+Leo's Messenger ist als klassischer SMS- und MMS-Messenger konzipiert.
 
-SMS werden über die SMS-Funktionen des Smartphones gesendet und empfangen. Für diese Funktionen benötigt die App entsprechende Android-Systemberechtigungen.
+SMS und MMS werden über die entsprechenden Funktionen des Smartphones und des Mobilfunknetzes gesendet und empfangen.
 
 Chat- und Einstellungsdaten werden lokal auf dem Gerät verwaltet.
+
+Leo's Messenger verwendet:
+
+- keine integrierte Werbeplattform
+- kein eigenes Benutzerkonto
+- keine verpflichtende Cloud
+- kein integriertes Werbe-Tracking
 
 Der öffentlich zugängliche Quellcode ermöglicht eine unabhängige Überprüfung der implementierten Funktionen.
 
@@ -124,14 +214,17 @@ Der öffentlich zugängliche Quellcode ermöglicht eine unabhängige Überprüfu
 
 Abhängig von Android-Version und verwendeten Funktionen benötigt Leo's Messenger unter anderem:
 
-- SMS senden
-- SMS empfangen
-- SMS lesen
-- Kontakte lesen
-- Benachrichtigungen anzeigen
-- MMS-/WAP-Push-Funktionen für die Einbindung als Standard-SMS-App
+- 📩 SMS senden
+- 📥 SMS empfangen
+- 📖 SMS lesen
+- 🖼️ MMS empfangen und verarbeiten
+- 📡 WAP-Push empfangen
+- 👤 Kontakte lesen
+- 🔔 Benachrichtigungen anzeigen
+- 📷 Zugriff auf ausgewählte Bilder für MMS
+- 📱 Berechtigungen für die Verwendung als Standard-SMS-App
 
-Die Berechtigungen dienen den entsprechenden Messenger-Funktionen.
+Die Berechtigungen werden für die entsprechenden Messenger-Funktionen benötigt.
 
 ---
 
@@ -144,25 +237,88 @@ Leo's Messenger wird entwickelt mit:
 - **Jetpack Compose**
 - **Android Studio**
 
-Getestet wird die App unter anderem auf einem **vivo X300**.
+Die App wird auf realen Android-Geräten getestet.
+
+Unter anderem erfolgt die Entwicklung und Erprobung auf einem:
+
+**vivo X300**
+
+Die Entwicklungsgeschichte des Projekts ist in:
+
+[`ENTWICKLUNG.md`](ENTWICKLUNG.md)
+
+dokumentiert.
 
 ---
 
 ## 📦 Installation
 
-Fertige Versionen werden im Bereich **Releases** als APK bereitgestellt.
+Fertige Versionen werden im Bereich **Releases** als signierte APK bereitgestellt.
 
-Da die APK außerhalb des Google Play Stores installiert wird, muss Android gegebenenfalls die Installation aus der verwendeten Quelle erlauben.
+### Installation
 
-Nach der Installation kann Leo's Messenger als Standard-SMS-App ausgewählt werden.
+1. aktuelle APK aus dem Bereich **Releases** herunterladen
+2. Installation aus dieser Quelle unter Android erlauben
+3. APK installieren
+4. Leo's Messenger als Standard-SMS-App auswählen
+5. benötigte Berechtigungen bestätigen
+
+Da die APK außerhalb des Google Play Stores installiert wird, kann Android beim ersten Mal eine zusätzliche Bestätigung verlangen.
+
+---
+
+## 🔄 Update einer vorhandenen Version
+
+Eine neue Version kann direkt über eine bereits installierte Version installiert werden, sofern dieselbe App-Signatur verwendet wird.
+
+Vorhandene App-Daten und Einstellungen bleiben dabei grundsätzlich erhalten.
+
+Trotzdem empfiehlt es sich bei wichtigen Nachrichten und Daten, regelmäßig eine geeignete Sicherung vorzuhalten.
 
 ---
 
 ## 🧪 Projektstatus
 
-Leo's Messenger befindet sich in aktiver Entwicklung.
+Leo's Messenger befindet sich in **aktiver Entwicklung**.
 
-Fehlerberichte und Hinweise sind willkommen. Für Fehler und Verbesserungsvorschläge kann der **Issues-Bereich** dieses GitHub-Repositories verwendet werden.
+### Aktueller Stand
+
+**Version 2.0.5**
+
+Die grundlegenden SMS- und MMS-Funktionen sind funktionsfähig.
+
+Einzelne Funktionen werden jedoch weiterhin:
+
+- getestet
+- optimiert
+- erweitert
+- an unterschiedliche Android-Geräte angepasst
+
+Insbesondere MMS kann sich je nach:
+
+- Mobilfunkanbieter
+- APN-Konfiguration
+- Android-Version
+- Gerätehersteller
+- Netzkonfiguration
+
+unterschiedlich verhalten.
+
+Fehlerberichte und Verbesserungsvorschläge sind willkommen.
+
+Dafür kann der **Issues-Bereich** dieses GitHub-Repositories verwendet werden.
+
+---
+
+## 🗺️ Weiterentwicklung
+
+Für zukünftige Versionen sind weitere Verbesserungen und Erweiterungen vorgesehen.
+
+Dabei gilt weiterhin ein wichtiges Entwicklungsprinzip:
+
+> **Neue Funktionen sollen bereits zuverlässig funktionierende Funktionen nicht beeinträchtigen.**
+
+Neue Funktionen werden deshalb schrittweise integriert und auf realen Geräten getestet.
 
 ---
 
@@ -170,9 +326,25 @@ Fehlerberichte und Hinweise sind willkommen. Für Fehler und Verbesserungsvorsch
 
 Die Nutzung von Leo's Messenger erfolgt auf eigene Verantwortung.
 
-Trotz sorgfältiger Entwicklung und Tests kann keine Gewähr für Fehlerfreiheit, ständige Verfügbarkeit oder vollständige Kompatibilität mit allen Android-Geräten und Android-Versionen übernommen werden.
+Trotz sorgfältiger Entwicklung und Tests kann keine Gewähr übernommen werden für:
 
-Für Datenverluste, entgangene Nachrichten oder sonstige unmittelbare oder mittelbare Schäden, die durch die Verwendung der Software entstehen, wird – soweit gesetzlich zulässig – keine Haftung übernommen.
+- vollständige Fehlerfreiheit
+- ständige Verfügbarkeit
+- vollständige Kompatibilität mit allen Android-Geräten
+- vollständige Kompatibilität mit allen Android-Versionen
+- vollständige Kompatibilität mit allen Mobilfunkanbietern
+
+Für insbesondere folgende Folgen wird – soweit gesetzlich zulässig – keine Haftung übernommen:
+
+- Datenverlust
+- nicht zugestellte SMS
+- nicht zugestellte MMS
+- verspätet zugestellte Nachrichten
+- zusätzliche Mobilfunkkosten
+- zusätzliche MMS-Kosten
+- Fehlfunktionen
+- unerwartetes Verhalten der App
+- sonstige unmittelbare oder mittelbare Schäden
 
 ---
 
@@ -180,11 +352,16 @@ Für Datenverluste, entgangene Nachrichten oder sonstige unmittelbare oder mitte
 
 **Leo / Leos-Net**
 
-Smart-Home- und Technik-Enthusiast  
-Android · Raspberry Pi · ioBroker · Smart Home
+Smart-Home- und Technik-Enthusiast
+
+**Android · Raspberry Pi · ioBroker · Smart Home**
+
+🌐 **leos-net.de**
 
 ---
 
-⭐ Wenn dir Leo's Messenger gefällt, kannst du das Projekt auf GitHub mit einem **Star** unterstützen.
+## ⭐ Projekt unterstützen
 
-leos-net.de
+Wenn dir **Leo's Messenger** gefällt, kannst du das Projekt auf GitHub mit einem **Star ⭐** unterstützen.
+
+Feedback, Fehlerberichte und Verbesserungsvorschläge helfen dabei, Leo's Messenger Schritt für Schritt weiterzuentwickeln.
