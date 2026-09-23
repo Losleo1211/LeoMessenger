@@ -13,12 +13,26 @@ Die App befindet sich weiterhin in aktiver Entwicklung und wird Schritt für Sch
 
 ## 📱 Aktuelle Version
 
-**V2.0.5**
+**V2.0.19**
 
-Mit Version **2.0.5** wurde Leo's Messenger deutlich erweitert.
+Mit Version **2.0.19** wurde Leo's Messenger technisch weiter verbessert und an moderne Android-Geräte angepasst.
 
-Neu hinzugekommen ist die Unterstützung von **MMS mit Bildanhängen**.  
-SMS und MMS werden gemeinsam innerhalb derselben Unterhaltung dargestellt.
+Die bereits eingeführte **SMS- und MMS-Unterstützung** wurde weiter optimiert. Zusätzlich wurden die Eingabezeile, die Bildschirmtastatur-Anpassung und die Übergabe von Bildern, GIFs und Stickern aus Gboard erweitert.
+
+### 🚀 Neu und verbessert bis V2.0.19
+
+- 🖼️ MMS mit Bildanhängen senden und empfangen
+- 📎 Bildauswahl direkt aus dem Chat
+- 🎞️ GIFs, Sticker und Bilder aus Gboard als MMS-Anhang übernehmen
+- 💬 SMS und MMS gemeinsam im selben Chatverlauf
+- 🖼️ Bildvorschau und vergrößerte Bildansicht
+- ✅ MMS-Sendestatus
+- ⌨️ kompakte Eingabezeile mit optimierten Display-Randabständen
+- 📱 verbesserte Anpassung an abgerundete Displays
+- ⬆️ Chatbereich wird beim Öffnen der Bildschirmtastatur nach oben angepasst
+- 🎬 flüssigere Synchronisierung mit der Gboard-/Android-Tastaturanimation
+- ℹ️ Versionsanzeige im Menü wird direkt aus der installierten App-Version gelesen
+- 🛠️ verschiedene Stabilitäts- und Darstellungsverbesserungen
 
 Leo's Messenger wird laufend weiterentwickelt und auf realen Android-Geräten getestet.
 
@@ -249,6 +263,8 @@ Die Entwicklungsgeschichte des Projekts ist in:
 
 dokumentiert.
 
+Der aktuelle Entwicklungsstand **V2.0.19** enthält zusätzlich Optimierungen für MMS, Gboard-Rich-Content, die Bildschirmtastatur und die Darstellung des Chatverlaufs.
+
 ---
 
 ## 📦 Installation
@@ -283,7 +299,7 @@ Leo's Messenger befindet sich in **aktiver Entwicklung**.
 
 ### Aktueller Stand
 
-**Version 2.0.5**
+**Version 2.0.19**
 
 Die grundlegenden SMS- und MMS-Funktionen sind funktionsfähig.
 
