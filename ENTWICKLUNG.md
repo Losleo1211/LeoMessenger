@@ -4,7 +4,7 @@ Leo's Messenger wurde schrittweise zu einer vollständigen Android-SMS- und MMS-
 Von Anfang an lag der Schwerpunkt auf **einfacher Bedienung**, **klarer Darstellung** und einer Funktion, die bei vielen Messenger-Apps fehlt:  
 **Nachrichtentexte sollen frei markiert und auch nur teilweise kopiert werden können.**
 
-Die folgende Übersicht zeigt die wichtigsten Entwicklungsschritte von **V1.1.0 bis V2.0.5**.
+Die folgende Übersicht zeigt die wichtigsten Entwicklungsschritte von **V1.1.0 bis V2.0.19**.
 
 ---
 
@@ -230,7 +230,164 @@ Mit V2.0.5 wurde die MMS-Erweiterung als zusammenhängender Entwicklungsstand ve
 - weniger Platzverbrauch im unteren Bildschirmbereich
 - SMS-Funktionen bleiben weiterhin vollständig erhalten
 
-V2.0.5 ist damit der aktuelle Entwicklungsstand von Leo's Messenger und verbindet die bisherigen SMS-Funktionen erstmals mit einer umfassenden MMS-Erweiterung.
+---
+
+## 📐 V2.0.6 – Display-Randabstände
+
+Die Eingabezeile wurde für Geräte mit abgerundeten Displayrändern angepasst.
+
+### Wichtige Änderungen
+- zusätzlicher Sicherheitsabstand links und rechts
+- Büroklammer und Sende-Pfeil werden nicht mehr so leicht vom Displayrand abgeschnitten
+- kompakte Eingabeleiste bleibt erhalten
+
+---
+
+## 🎞️ V2.0.7 – Gboard-Rich-Content
+
+Leo's Messenger wurde um die direkte Übergabe von Medieninhalten aus Gboard erweitert.
+
+### Wichtige Änderungen
+- Vorbereitung für GIFs, Sticker und Bilder aus Gboard
+- Bildinhalte können als MMS-Anhang übernommen werden
+- unterstützte Bild-MIME-Typen wurden ergänzt
+
+---
+
+## 🧩 V2.0.8 – Android Receive Content
+
+Die Rich-Content-Unterstützung wurde auf die AndroidX-Receive-Content-API umgestellt.
+
+### Wichtige Änderungen
+- `image/gif`, `image/webp`, `image/png`, `image/jpeg` und `image/*`
+- verbesserte Übergabe von Bildern, GIFs und Stickern
+- weitere Integration in die MMS-Verarbeitung
+
+---
+
+## 🛠️ V2.0.9 – Stabilisierung des Rich-Content-Eingabefeldes
+
+Ein Absturz beim Erzeugen des neuen Eingabefeldes wurde behoben.
+
+### Wichtige Änderungen
+- Initialisierung des Rich-Content-Eingabefeldes korrigiert
+- Textänderungs-Callback stabilisiert
+- GIF-/Sticker-/Bild-Unterstützung bleibt erhalten
+
+---
+
+## ⌨️ V2.0.10 – Tastatur- und Safe-Drawing-Anpassung
+
+Die Eingabezeile wurde weiter an die Android-Bildschirmtastatur angepasst.
+
+### Wichtige Änderungen
+- zusätzliche Safe-Drawing-Ränder
+- bessere Berücksichtigung der Bildschirmtastatur
+- weniger Abschneiden der Eingabezeile bei geöffnetem Gboard
+
+---
+
+## 🖼️ V2.0.11 – Erweiterte Gboard-Erkennung
+
+Die unterstützten Medienformate werden Gboard nun bei der Eingabeverbindung ausdrücklich gemeldet.
+
+### Wichtige Änderungen
+- MIME-Typen werden über die InputConnection bereitgestellt
+- Gboard kann GIFs, Sticker und Bilder besser als unterstützten Inhalt erkennen
+- MMS-Übergabe bleibt erhalten
+
+---
+
+## 📱 V2.0.12 – IME-Verhalten überarbeitet
+
+Das Verhalten der Eingabezeile beim Öffnen der Bildschirmtastatur wurde weiter überarbeitet.
+
+### Wichtige Änderungen
+- unerwünschter großer Leerraum beim Fokussieren des Textfeldes reduziert
+- Tastatur- und Fensterverhalten angepasst
+- Rich-Content-Funktionen bleiben erhalten
+
+---
+
+## ⬆️ V2.0.13 – Chatbereich über der Tastatur
+
+Der Chatbereich wurde so angepasst, dass er sich bei geöffneter Bildschirmtastatur nach oben verschiebt.
+
+### Wichtige Änderungen
+- Chatverlauf bleibt oberhalb von Gboard sichtbar
+- Eingabezeile bleibt direkt über der Tastatur
+- automatisches Scrollen zur letzten Nachricht ergänzt
+
+---
+
+## ℹ️ V2.0.14 – Versionsanzeige und IME-Korrekturen
+
+Neben weiteren Tastaturkorrekturen wurde die Versionsanzeige im Menü überarbeitet.
+
+### Wichtige Änderungen
+- aktuelle App-Version sollte automatisch angezeigt werden
+- Tastaturhöhe und Chatbereich besser aufeinander abgestimmt
+- weiteres Feintuning des Nachrichtenverlaufs
+
+---
+
+## 🧱 V2.0.15 – BuildConfig-Unterstützung
+
+Für die automatische Versionsanzeige wurde zunächst die Erzeugung von `BuildConfig` aktiviert.
+
+### Wichtige Änderungen
+- `buildConfig = true`
+- Versionsanzeige im Info-Bereich vorbereitet
+
+---
+
+## 🔧 V2.0.16 – Versionsanzeige ohne BuildConfig
+
+Da `BuildConfig` im Projekt weiterhin Probleme verursachte, wurde die Versionsabfrage auf den Android-PackageManager umgestellt.
+
+### Wichtige Änderungen
+- Version wird direkt aus der installierten App gelesen
+- weniger Abhängigkeit von generiertem Build-Code
+- Tastatur- und MMS-Funktionen bleiben unverändert erhalten
+
+---
+
+## ✅ V2.0.17 – Versionsanzeige vollständig korrigiert
+
+Der letzte verbliebene `BuildConfig`-Verweis wurde entfernt.
+
+### Wichtige Änderungen
+- keine `BuildConfig`-Abhängigkeit mehr
+- Menü und Info-Dialog lesen die installierte Versionsnummer direkt aus
+- Versionsanzeige arbeitet wieder zuverlässig
+
+---
+
+## 🎬 V2.0.18 – Flüssigere Tastaturbewegung
+
+Die Bewegung des Chatbereichs beim Öffnen der Bildschirmtastatur wurde animiert.
+
+### Wichtige Änderungen
+- weichere Bewegung der Eingabezeile
+- Chatbereich wird gleichzeitig verkleinert
+- Übergang beim Öffnen von Gboard verbessert
+
+---
+
+## 🚀 V2.0.19 – Synchronisierte Gboard-/IME-Animation
+
+Mit V2.0.19 wurde die Tastaturbewegung nochmals grundlegend verbessert.
+
+### Neu und verbessert
+- Chat und Eingabezeile folgen direkt der tatsächlichen Android-/Gboard-IME-Animation
+- eigener zeitgesteuerter Tastatur-Tween entfernt
+- flüssigere Synchronisierung zwischen Tastatur, Eingabezeile und Nachrichtenverlauf
+- Chatbereich bleibt oberhalb der Tastatur sichtbar
+- automatisches Scrollen zur letzten Nachricht bleibt erhalten
+- SMS-, MMS-, GIF-, Sticker- und Bildfunktionen bleiben vollständig erhalten
+- Versionsanzeige bleibt dynamisch und zuverlässig
+
+**V2.0.19 bildet damit den aktuellen Entwicklungsstand von Leo's Messenger.**
 
 ---
 
