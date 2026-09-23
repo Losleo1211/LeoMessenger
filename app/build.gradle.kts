@@ -5,7 +5,6 @@ plugins {
 
 android {
     namespace = "at.leosnet.leosmessenger"
-
     compileSdk {
         version = release(37) {
             minorApiLevel = 1
@@ -16,9 +15,8 @@ android {
         applicationId = "at.leosnet.leosmessenger"
         minSdk = 24
         targetSdk = 36
-
-        versionCode = 216
-        versionName = "2.0.16"
+        versionCode = 219
+        versionName = "2.0.19"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -30,12 +28,10 @@ android {
             }
         }
     }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-
     buildFeatures {
         compose = true
     }
@@ -51,16 +47,13 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
-    // MMS-Unterstützung für LeosMessenger V2.0.13
     implementation("com.klinkerapps:android-smsmms:5.2.6")
 
     testImplementation(libs.junit)
-
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
-
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

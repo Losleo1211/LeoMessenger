@@ -44,6 +44,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
 import androidx.core.view.OnReceiveContentListener
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsAnimationCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.inputmethod.EditorInfoCompat
 import androidx.core.view.inputmethod.InputConnectionCompat
 import androidx.compose.animation.AnimatedVisibility
@@ -86,6 +88,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -101,7 +104,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * V2.0.15: Rich Content + stabile IME-Behandlung für Chat und Eingabezeile.
+ * V2.0.16: Rich Content + stabile IME-Behandlung für Chat und Eingabezeile.
  * Gboard und andere IMEs sehen dadurch bereits beim Öffnen des Eingabefeldes,
  * dass Leo's Messenger Bilder, GIFs und Sticker akzeptiert.
  */
@@ -1680,6 +1683,13 @@ private fun ChatUebersicht(
     var sortiermenuOffen by remember { mutableStateOf(false) }
     var sortierung by remember { mutableStateOf(ladeSortierung(context)) }
     var infoOffen by remember { mutableStateOf(false) }
+    val appVersion = remember(context) {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.0.18"
+        } catch (_: Exception) {
+            "2.0.18"
+        }
+    }
     val scope = rememberCoroutineScope()
     val q = suche.trim()
     val basisChats = chats.toList()
@@ -1699,11 +1709,11 @@ private fun ChatUebersicht(
         val anzahlNachrichten = chats.sumOf { it.nachrichten.size }
         AlertDialog(
             onDismissRequest = { infoOffen = false },
-            title = { Text("Leo`s Messenger V${BuildConfig.VERSION_NAME}") },
+            title = { Text("Leo`s Messenger V$appVersion") },
             text = {
                 Text(
                     "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
-                        "Aktuelle Version: V${BuildConfig.VERSION_NAME}\n\n" +
+                        "Aktuelle Version: V$appVersion\n\n" +
                         "SMS/MMS, Bildanhänge sowie Gboard-GIF-/Sticker-Unterstützung. " +
                         "Die Eingabeleiste und der Nachrichtenbereich berücksichtigen die Bildschirmtastatur gemeinsam."
                 )
@@ -1805,7 +1815,7 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Info zu V${BuildConfig.VERSION_NAME}") },
+                                text = { Text("Info zu V$appVersion") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     infoOffen = true
@@ -2259,18 +2269,58 @@ private fun ChatAnsicht(
     // V1.7.0: Auch Android-Zurück / Zurück-Geste zuerst animieren.
     BackHandler(enabled = true) { animiertZurueck() }
 
-    // V2.0.15: IME explizit behandeln. Die Eingabezeile wird nur optisch
-    // über die Tastatur verschoben; gleichzeitig wird der Chatbereich um
-    // exakt dieselbe Höhe verkleinert. So verschwinden keine Nachrichten
-    // unter Gboard und es entsteht kein großer Leerraum beim Fokussieren.
+    // V2.0.19: IME-Bewegung direkt mit der echten Android-Tastaturanimation
+    // synchronisieren. Kein eigener Tween mehr: Die Eingabezeile und der
+    // Chatbereich folgen jedem Animations-Frame von Gboard. Dadurch bleibt
+    // der letzte Chatinhalt oberhalb der Tastatur und die Bewegung wirkt
+    // deutlich flüssiger, ohne dass die Tastatur den Chat überdeckt.
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val imeBottom = with(density) { WindowInsets.ime.getBottom(this).toDp() }
-    val navBottom = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
-    val imeLift = (imeBottom - navBottom).coerceAtLeast(0.dp)
+    val rootView = LocalView.current
+    var imeLiftPx by remember(chat.id) { mutableIntStateOf(0) }
 
-    LaunchedEffect(imeLift, chat.nachrichten.size) {
-        if (imeLift > 0.dp && chat.nachrichten.isNotEmpty()) {
-            delay(80)
+    DisposableEffect(rootView, chat.id) {
+        fun updateIme(insets: WindowInsetsCompat?) {
+            if (insets == null) return
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            imeLiftPx = (ime - nav).coerceAtLeast(0)
+        }
+
+        // Aktuellen Zustand übernehmen, falls die Tastatur schon sichtbar ist.
+        updateIme(ViewCompat.getRootWindowInsets(rootView))
+
+        val callback = object : WindowInsetsAnimationCompat.Callback(
+            WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE
+        ) {
+            override fun onProgress(
+                insets: WindowInsetsCompat,
+                runningAnimations: MutableList<WindowInsetsAnimationCompat>
+            ): WindowInsetsCompat {
+                updateIme(insets)
+                return insets
+            }
+
+            override fun onEnd(animation: WindowInsetsAnimationCompat) {
+                updateIme(ViewCompat.getRootWindowInsets(rootView))
+            }
+        }
+
+        ViewCompat.setWindowInsetsAnimationCallback(rootView, callback)
+        ViewCompat.requestApplyInsets(rootView)
+
+        onDispose {
+            ViewCompat.setWindowInsetsAnimationCallback(rootView, null)
+        }
+    }
+
+    val imeLift = with(density) { imeLiftPx.toDp() }
+    val keyboardOpen = imeLiftPx > 0
+
+    LaunchedEffect(keyboardOpen, chat.nachrichten.size) {
+        if (keyboardOpen && chat.nachrichten.isNotEmpty()) {
+            // Kurz nach Beginn der IME-Animation den Nachrichtenverlauf
+            // weich an die neue sichtbare Höhe anpassen.
+            delay(20)
             listState.animateScrollToItem(chat.nachrichten.lastIndex)
         }
     }
