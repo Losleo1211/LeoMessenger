@@ -23,6 +23,13 @@ import android.content.ContentValues
 import android.telephony.SmsManager
 import android.graphics.BitmapFactory
 import android.widget.Toast
+import android.widget.EditText
+import android.view.Gravity
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.text.InputType
+import android.text.Editable
+import android.text.TextWatcher
 import android.provider.ContactsContract
 import androidx.activity.result.contract.ActivityResultContracts
 import android.os.Bundle
@@ -35,6 +42,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
+import androidx.core.view.OnReceiveContentListener
+import androidx.core.view.ViewCompat
+import androidx.core.view.inputmethod.EditorInfoCompat
+import androidx.core.view.inputmethod.InputConnectionCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
@@ -74,6 +85,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,6 +99,108 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+
+/**
+ * V2.0.12: Rich Content mit expliziter Gboard-MIME-Anmeldung.
+ * Gboard und andere IMEs sehen dadurch bereits beim Öffnen des Eingabefeldes,
+ * dass Leo's Messenger Bilder, GIFs und Sticker akzeptiert.
+ */
+private class RichContentEditText(
+    context: Context,
+    private val onTextValueChanged: (String) -> Unit,
+    private val onRichContent: (Uri, String?) -> Unit
+) : EditText(context) {
+
+    companion object {
+        private val RICH_MIME_TYPES = arrayOf(
+            "image/gif",
+            "image/webp",
+            "image/png",
+            "image/jpeg",
+            "image/*"
+        )
+    }
+
+    private var internalTextUpdate = false
+
+    init {
+        // TextWatcher erst NACH dem EditText-Konstruktor registrieren.
+        // Dadurch kann Android waehrend super(...) keinen Callback aufrufen,
+        // bevor onTextValueChanged initialisiert ist (Crash-Fix V2.0.9).
+        addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                if (!internalTextUpdate) {
+                    onTextValueChanged(s?.toString().orEmpty())
+                }
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
+
+        // Offizielle AndroidX Receive-Content-API. Diese Registrierung ist wichtig,
+        // damit EditorInfoCompat die akzeptierten MIME-Typen an Gboard melden kann.
+        ViewCompat.setOnReceiveContentListener(
+            this,
+            RICH_MIME_TYPES,
+            OnReceiveContentListener { _, payload ->
+                val clip = payload.clip
+                val description = clip.description
+
+                for (i in 0 until clip.itemCount) {
+                    val uri = clip.getItemAt(i).uri ?: continue
+                    val resolverMime = try {
+                        context.contentResolver.getType(uri)
+                    } catch (_: Exception) {
+                        null
+                    }
+
+                    var mime = resolverMime
+                    if (mime == null || !mime.startsWith("image/")) {
+                        for (m in 0 until description.mimeTypeCount) {
+                            val candidate = description.getMimeType(m)
+                            if (candidate.startsWith("image/")) {
+                                mime = candidate
+                                break
+                            }
+                        }
+                    }
+
+                    if (mime?.startsWith("image/") == true) {
+                        onRichContent(uri, mime)
+                        return@OnReceiveContentListener null
+                    }
+                }
+
+                // Nicht von uns behandelter Inhalt wird an Android zurückgegeben.
+                payload
+            }
+        )
+    }
+
+    fun setTextFromCompose(value: String) {
+        if (text?.toString() == value) return
+        internalTextUpdate = true
+        setText(value)
+        setSelection(value.length.coerceAtMost(text?.length ?: 0))
+        internalTextUpdate = false
+    }
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+        val base = super.onCreateInputConnection(outAttrs) ?: return null
+
+        // V2.0.11: Die MIME-Typen nicht nur indirekt aus dem Receive-Content-
+        // Listener lesen, sondern Gboard bei JEDEM InputConnection-Aufbau
+        // ausdrücklich mitteilen. Das ist auf manchen OEM-/Gboard-Versionen
+        // nötig, damit GIF- und Sticker-Schaltflächen aktiviert werden.
+        EditorInfoCompat.setContentMimeTypes(outAttrs, RICH_MIME_TYPES)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+            outAttrs.contentMimeTypes = RICH_MIME_TYPES
+        }
+
+        return InputConnectionCompat.createWrapper(this, base, outAttrs)
+    }
+}
 
 data class Nachricht(
     val id: Long,
@@ -1588,7 +1703,7 @@ private fun ChatUebersicht(
             text = {
                 Text(
                     "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
-                        "Neu in V2.0.6: Die untere Eingabeleiste erhält zusätzlichen Sicherheitsabstand zu den abgerundeten Displayrändern. Dadurch werden Büroklammer und Sende-Pfeil nicht mehr angeschnitten. MMS und die kompakte Eingabe bleiben unverändert erhalten."
+                        "Neu in V2.0.11: Gboard erhält die unterstützten Bild-MIME-Typen nun bei jedem Aufbau der InputConnection ausdrücklich über AndroidX und das native EditorInfo-Feld. Dadurch sollen GIF-, Sticker- und Bildfunktionen in Gboard zuverlässig aktiviert werden. Die korrigierte Eingabeleiste aus V2.0.10 bleibt erhalten."
                 )
             },
             confirmButton = {
@@ -1688,7 +1803,7 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Info zu V2.0.6") },
+                                text = { Text("Info zu V2.0.8") },
                                 onClick = {
                                     hauptmenuOffen = false
                                     infoOffen = true
@@ -2142,6 +2257,11 @@ private fun ChatAnsicht(
     // V1.7.0: Auch Android-Zurück / Zurück-Geste zuerst animieren.
     BackHandler(enabled = true) { animiertZurueck() }
 
+    // V2.0.12: Die Eingabeleiste wird über der IME verschoben statt mit IME-Padding
+    // künstlich höher gemacht. Das verhindert den großen Leerraum beim Fokussieren.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val imeBottom = with(density) { WindowInsets.ime.getBottom(this).toDp() }
+
     Scaffold(
         modifier = Modifier.graphicsLayer {
             when (oeffnenAnimation) {
@@ -2243,11 +2363,22 @@ private fun ChatAnsicht(
             )
         },
         bottomBar = {
-            Surface(tonalElevation = 4.dp) {
+            Surface(
+                tonalElevation = 4.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .offset(y = -imeBottom)
+            ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = 10.dp, end = 10.dp, top = 1.dp, bottom = 3.dp)
+                        .windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(
+                                WindowInsetsSides.Horizontal
+                            )
+                        )
+                        .padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 6.dp)
                 ) {
                     if (anhangUri != null) {
                         Row(
@@ -2285,32 +2416,44 @@ private fun ChatAnsicht(
                             border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
                             color = Color.Transparent
                         ) {
-                            BasicTextField(
-                                value = eingabe,
-                                onValueChange = { eingabe = it },
+                            val textFarbe = MaterialTheme.colorScheme.onSurface.toArgb()
+                            val hintFarbe = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
+
+                            AndroidView(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .padding(horizontal = 14.dp),
-                                singleLine = true,
-                                textStyle = LocalTextStyle.current.copy(
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 16.sp
-                                ),
-                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                                decorationBox = { innerTextField ->
-                                    Box(
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentAlignment = Alignment.CenterStart
-                                    ) {
-                                        if (eingabe.isEmpty()) {
-                                            Text(
-                                                if (anhangUri == null) "Nachricht" else "Text zur MMS",
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontSize = 16.sp
-                                            )
+                                    .padding(horizontal = 10.dp),
+                                factory = { viewContext ->
+                                    RichContentEditText(
+                                        context = viewContext,
+                                        onTextValueChanged = { eingabe = it },
+                                        onRichContent = { uri, mime ->
+                                            anhangUri = uri
+                                            Toast.makeText(
+                                                context,
+                                                when {
+                                                    mime == "image/gif" -> "GIF für MMS übernommen"
+                                                    mime == "image/webp" -> "Sticker/Bild für MMS übernommen"
+                                                    else -> "Bild für MMS übernommen"
+                                                },
+                                                Toast.LENGTH_SHORT
+                                            ).show()
                                         }
-                                        innerTextField()
+                                    ).apply {
+                                        setSingleLine(true)
+                                        maxLines = 1
+                                        gravity = Gravity.CENTER_VERTICAL
+                                        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                        setPadding(0, 0, 0, 0)
+                                        textSize = 16f
                                     }
+                                },
+                                update = { editText ->
+                                    editText.setTextFromCompose(eingabe)
+                                    editText.hint = if (anhangUri == null) "Nachricht" else "Text zur MMS"
+                                    editText.setTextColor(textFarbe)
+                                    editText.setHintTextColor(hintFarbe)
                                 }
                             )
                         }
