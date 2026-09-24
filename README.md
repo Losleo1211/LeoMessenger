@@ -13,13 +13,13 @@ Die App befindet sich weiterhin in aktiver Entwicklung und wird Schritt für Sch
 
 ## 📱 Aktuelle Version
 
-**V2.0.19**
+**V3.0.2**
 
-Mit Version **2.0.19** wurde Leo's Messenger technisch weiter verbessert und an moderne Android-Geräte angepasst.
+Mit Version **3.0.2** wurde Leo's Messenger funktional und technisch deutlich erweitert. Neben Verbesserungen bei SMS, MMS und der Bildschirmtastatur wurden das Hauptmenü, Benachrichtigungen, MMS-Einstellungen und die Übergabe von Texten aus anderen Apps ausgebaut.
 
-Die bereits eingeführte **SMS- und MMS-Unterstützung** wurde weiter optimiert. Zusätzlich wurden die Eingabezeile, die Bildschirmtastatur-Anpassung und die Übergabe von Bildern, GIFs und Stickern aus Gboard erweitert.
+Die bereits eingeführte **SMS- und MMS-Unterstützung** wurde weiter optimiert. Zusätzlich wurden die Bildschirmtastatur-Anpassung, Benachrichtigungseinstellungen, MMS-Steuerung sowie die Übergabe von Texten und Medien verbessert.
 
-### 🚀 Neu und verbessert bis V2.0.19
+### 🚀 Neu und verbessert bis V3.0.2
 
 - 🖼️ MMS mit Bildanhängen senden und empfangen
 - 📎 Bildauswahl direkt aus dem Chat
@@ -27,12 +27,19 @@ Die bereits eingeführte **SMS- und MMS-Unterstützung** wurde weiter optimiert.
 - 💬 SMS und MMS gemeinsam im selben Chatverlauf
 - 🖼️ Bildvorschau und vergrößerte Bildansicht
 - ✅ MMS-Sendestatus
-- ⌨️ kompakte Eingabezeile mit optimierten Display-Randabständen
-- 📱 verbesserte Anpassung an abgerundete Displays
-- ⬆️ Chatbereich wird beim Öffnen der Bildschirmtastatur nach oben angepasst
-- 🎬 flüssigere Synchronisierung mit der Gboard-/Android-Tastaturanimation
-- ℹ️ Versionsanzeige im Menü wird direkt aus der installierten App-Version gelesen
-- 🛠️ verschiedene Stabilitäts- und Darstellungsverbesserungen
+- 🔘 MMS im Hauptmenü ein- und ausschalten
+- ⚠️ MMS-Kostenhinweis beim ersten Aktivieren
+- 🔁 MMS-Kostenhinweis kann über das Menü erneut angezeigt werden
+- 📎 Büroklammer bei deaktiviertem MMS sichtbar ausgegraut
+- 🔕 Vibration direkt im Hauptmenü ein- und ausschalten
+- 🔔 eigener Bereich für Benachrichtigungseinstellungen
+- ⚙️ direkter Button zu den Android-Benachrichtigungseinstellungen
+- 🧪 Test-Benachrichtigung zur Funktionsprüfung
+- 📤 fertige Texte aus anderen Apps über Android „Teilen“ an Leo's Messenger übergeben
+- ⌨️ Chatbereich wird beim Öffnen der Bildschirmtastatur vollständig nach oben angepasst
+- 📱 verbesserte Anpassung an moderne und abgerundete Displays
+- ℹ️ erweiterte Info-Anzeige mit App-Version, Standard-SMS-App, MMS-, Vibrations- und Benachrichtigungsstatus
+- 🛠️ verschiedene Stabilitäts-, Darstellungs- und Bedienungsverbesserungen
 
 Leo's Messenger wird laufend weiterentwickelt und auf realen Android-Geräten getestet.
 
@@ -71,6 +78,10 @@ Seit Version **2.0** unterstützt Leo's Messenger zusätzlich MMS.
 - MMS-Sendestatus anzeigen
 - automatische Größenanpassung von Bildern für den MMS-Versand
 - Text und Bild gemeinsam als MMS versenden
+- MMS im Hauptmenü ein- und ausschalten
+- Kostenhinweis beim erstmaligen Aktivieren von MMS
+- Kostenhinweis kann später über das Menü erneut angezeigt werden
+- bei deaktiviertem MMS wird die Büroklammer sichtbar ausgegraut
 
 > ⚠️ **Hinweis:**  
 > Der Versand und Empfang von MMS kann abhängig vom Mobilfunkanbieter, den APN-/MMS-Einstellungen, der Android-Version und dem verwendeten Gerät unterschiedlich funktionieren.
@@ -114,6 +125,25 @@ So können zum Beispiel direkt ausgewählt werden:
 
 ---
 
+### 🔔 Benachrichtigungen & Einstellungen
+
+Über das Hauptmenü können wichtige Messenger-Funktionen direkt gesteuert werden:
+
+- Benachrichtigungen ein- und ausschalten
+- Pop-up / Heads-up ein- und ausschalten
+- Benachrichtigungston ein- und ausschalten
+- Vibration ein- und ausschalten
+- Nachrichtenvorschau ein- und ausschalten
+- Test-Benachrichtigung senden
+- Android-Benachrichtigungseinstellungen direkt öffnen
+- MMS ein- und ausschalten
+
+Beim **ersten Aktivieren von MMS** weist Leo's Messenger darauf hin, dass je nach Mobilfunktarif zusätzliche Kosten durch den Netzbetreiber anfallen können.
+
+Der Hinweis kann später über das Menü **„MMS-Kostenhinweis erneut anzeigen“** erneut geöffnet werden.
+
+---
+
 ### 📂 Chatverwaltung
 
 - Chats durchsuchen
@@ -136,6 +166,24 @@ Die Chatübersicht kann sortiert werden nach:
 - Name Z–A
 
 Wird von einem Absender erneut eine Nachricht empfangen, dessen Chat sich noch im Papierkorb befindet, kann der bisherige Nachrichtenverlauf wieder dem aktiven Chat zugeordnet werden.
+
+---
+
+### 📤 Texte aus anderen Apps übernehmen
+
+Leo's Messenger kann fertige Texte über die Android-Funktion **„Teilen“** übernehmen.
+
+Zum Beispiel können Texte aus:
+
+- GitHub
+- Browsern
+- Notiz-Apps
+- anderen Android-Apps
+
+an Leo's Messenger übergeben werden.
+
+Anschließend kann ein vorhandener Chat ausgewählt oder ein neuer Chat angelegt werden.  
+Der übernommene Text wird zunächst in das Eingabefeld eingefügt und **nicht automatisch versendet**.
 
 ---
 
@@ -263,7 +311,7 @@ Die Entwicklungsgeschichte des Projekts ist in:
 
 dokumentiert.
 
-Der aktuelle Entwicklungsstand **V2.0.19** enthält zusätzlich Optimierungen für MMS, Gboard-Rich-Content, die Bildschirmtastatur und die Darstellung des Chatverlaufs.
+Der aktuelle Entwicklungsstand **V3.0.2** enthält zusätzlich Optimierungen für MMS, Gboard-Rich-Content, Benachrichtigungen, Android-Teilen, die Bildschirmtastatur und die Darstellung des Chatverlaufs.
 
 ---
 
@@ -287,6 +335,9 @@ Da die APK außerhalb des Google Play Stores installiert wird, kann Android beim
 
 Eine neue Version kann direkt über eine bereits installierte Version installiert werden, sofern dieselbe App-Signatur verwendet wird.
 
+Wird eine APK mit einem anderen Signaturschlüssel erstellt, kann Android ein direktes Update ablehnen.  
+Für Releases sollte daher immer derselbe Keystore wie bei den vorherigen signierten Versionen verwendet werden.
+
 Vorhandene App-Daten und Einstellungen bleiben dabei grundsätzlich erhalten.
 
 Trotzdem empfiehlt es sich bei wichtigen Nachrichten und Daten, regelmäßig eine geeignete Sicherung vorzuhalten.
@@ -299,7 +350,7 @@ Leo's Messenger befindet sich in **aktiver Entwicklung**.
 
 ### Aktueller Stand
 
-**Version 2.0.19**
+**Version 3.0.2**
 
 Die grundlegenden SMS- und MMS-Funktionen sind funktionsfähig.
 
