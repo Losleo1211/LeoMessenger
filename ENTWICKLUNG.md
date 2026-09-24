@@ -4,7 +4,7 @@ Leo's Messenger wurde schrittweise zu einer vollständigen Android-SMS- und MMS-
 Von Anfang an lag der Schwerpunkt auf **einfacher Bedienung**, **klarer Darstellung** und einer Funktion, die bei vielen Messenger-Apps fehlt:  
 **Nachrichtentexte sollen frei markiert und auch nur teilweise kopiert werden können.**
 
-Die folgende Übersicht zeigt die wichtigsten Entwicklungsschritte von **V1.1.0 bis V2.0.19**.
+Die folgende Übersicht zeigt die wichtigsten Entwicklungsschritte von **V1.1.0 bis V3.0.2**.
 
 ---
 
@@ -387,7 +387,96 @@ Mit V2.0.19 wurde die Tastaturbewegung nochmals grundlegend verbessert.
 - SMS-, MMS-, GIF-, Sticker- und Bildfunktionen bleiben vollständig erhalten
 - Versionsanzeige bleibt dynamisch und zuverlässig
 
-**V2.0.19 bildet damit den aktuellen Entwicklungsstand von Leo's Messenger.**
+**V2.0.19 bildete den Abschluss der 2.0.19-Entwicklungsstufe und die Grundlage für die folgenden Optimierungen bis Version 3.0.2.**
+
+---
+
+## 🔙 V2.0.20 – Tastatur beim Verlassen des Chats
+
+Beim Wechsel aus einem geöffneten Chat zurück in die Chatübersicht blieb die Bildschirmtastatur teilweise geöffnet.
+
+### Wichtige Änderungen
+- Tastatur wird beim Verlassen des Chats sofort geschlossen
+- Fokus wird aus dem Texteingabefeld entfernt
+- Gboard bleibt nicht mehr über der Chatübersicht stehen
+
+---
+
+## ⚙️ V2.0.21 – MMS-, Vibrations- und Benachrichtigungseinstellungen
+
+Das Hauptmenü wurde um zusätzliche Einstellungen für MMS und Benachrichtigungen erweitert.
+
+### Wichtige Änderungen
+- MMS im Hauptmenü ein- und ausschaltbar
+- Warnhinweis beim Aktivieren von MMS wegen möglicher Netzbetreiberkosten
+- Vibration direkt im Hauptmenü ein- und ausschaltbar
+- eigener Bereich für Benachrichtigungseinstellungen
+- direkter Zugriff auf die Android-Benachrichtigungseinstellungen
+- fertige Texte können über die Android-Funktion „Teilen“ an Leo's Messenger übergeben werden
+- bei deaktiviertem MMS werden Bildanhänge blockiert
+
+---
+
+## 🧩 V2.0.22 – Kompatibilitätskorrektur im Hauptmenü
+
+Ein Buildfehler in der verwendeten Material3-Version wurde behoben.
+
+### Wichtige Änderungen
+- nicht unterstützter Parameter `trailingContent` entfernt
+- MMS- und Vibrationsschalter direkt in die Menüzeile integriert
+- alle Funktionen aus V2.0.21 beibehalten
+
+---
+
+## 🚀 V3.0.0 – Neue Hauptversion
+
+Mit V3.0.0 wurde Leo's Messenger strukturell weiter ausgebaut.
+
+### Neu und verbessert
+- Hauptmenü neu gegliedert
+- Bereiche für Nachrichten, Benachrichtigungen & MMS, Verwaltung sowie Hilfe & Info
+- Test-Benachrichtigung ergänzt
+- Info-Bereich erweitert
+- Anzeige, ob Leo's Messenger als Standard-SMS-App eingerichtet ist
+- Anzeige des MMS-, Vibrations- und Benachrichtigungsstatus
+- Übergabe fertiger Texte aus anderen Apps bleibt erhalten
+- bestehende SMS-, MMS-, Gboard- und Rich-Content-Funktionen bleiben vollständig erhalten
+
+Der Sprung auf **V3.0.0** kennzeichnet damit eine neue Entwicklungsstufe mit stärkerem Schwerpunkt auf Einstellungen, Bedienkomfort und Systemintegration.
+
+---
+
+## ⌨️ V3.0.1 – Chatbereich vollständig über der Tastatur
+
+Die Anpassung des Chatverlaufs an die Bildschirmtastatur wurde grundlegend vereinfacht.
+
+### Wichtige Änderungen
+- Android übernimmt das Verkleinern des Chatfensters über `adjustResize`
+- bisherige manuelle IME-Verschiebung entfernt
+- der sichtbare Chatbereich wird beim Öffnen von Gboard vollständig nach oben geschoben
+- Eingabezeile bleibt oberhalb der Tastatur
+- automatisches Scrollen zur letzten Nachricht bleibt erhalten
+- dadurch weniger Überlagerungen und weniger verdeckte Nachrichten
+
+---
+
+## ✅ V3.0.2 – MMS-Steuerung und Kostenhinweis
+
+V3.0.2 konzentriert sich auf eine klarere MMS-Steuerung und eine übersichtlichere Bedienung.
+
+### Neu und verbessert
+- Menüpunkt für Testnachrichten wieder entfernt
+- MMS-Schalter im Hauptmenü weiter überarbeitet
+- Büroklammer bei deaktiviertem MMS sichtbar ausgegraut
+- Bild-, GIF- und Sticker-Funktionen aus Gboard an den MMS-Status gekoppelt
+- bei ausgeschaltetem MMS werden Bildanhänge nicht versendet
+- MMS-Kostenhinweis wird beim erstmaligen Aktivieren angezeigt
+- spätere Aktivierungen erfolgen ohne erneute Warnung
+- eigener Menüpunkt **„MMS-Kostenhinweis erneut anzeigen“**
+- Verbesserungen bei Tastatur- und Chatdarstellung aus V3.0.1 bleiben erhalten
+- alle bewährten SMS-, MMS-, Kontakt-, Papierkorb- und Sortierfunktionen bleiben erhalten
+
+**V3.0.2 bildet derzeit den aktuellen stabilen Entwicklungsstand von Leo's Messenger.**
 
 ---
 
