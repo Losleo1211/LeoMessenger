@@ -44,8 +44,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
 import androidx.core.view.OnReceiveContentListener
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsAnimationCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.inputmethod.EditorInfoCompat
 import androidx.core.view.inputmethod.InputConnectionCompat
 import androidx.compose.animation.AnimatedVisibility
@@ -88,7 +86,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -125,6 +124,7 @@ private class RichContentEditText(
     }
 
     private var internalTextUpdate = false
+    private var mmsEnabledForIme = true
 
     init {
         // TextWatcher erst NACH dem EditText-Konstruktor registrieren.
@@ -140,8 +140,17 @@ private class RichContentEditText(
             override fun afterTextChanged(s: Editable?) = Unit
         })
 
-        // Offizielle AndroidX Receive-Content-API. Diese Registrierung ist wichtig,
-        // damit EditorInfoCompat die akzeptierten MIME-Typen an Gboard melden kann.
+        // Rich Content wird dynamisch an den MMS-Schalter gekoppelt.
+        // Ist MMS aus, werden Gboard keine Bild/GIF/Sticker-MIME-Typen gemeldet.
+        updateReceiveContentRegistration()
+    }
+
+    private fun updateReceiveContentRegistration() {
+        if (!mmsEnabledForIme) {
+            ViewCompat.setOnReceiveContentListener(this, emptyArray(), null)
+            return
+        }
+
         ViewCompat.setOnReceiveContentListener(
             this,
             RICH_MIME_TYPES,
@@ -173,11 +182,22 @@ private class RichContentEditText(
                         return@OnReceiveContentListener null
                     }
                 }
-
-                // Nicht von uns behandelter Inhalt wird an Android zurückgegeben.
                 payload
             }
         )
+    }
+
+    fun setMmsEnabled(enabled: Boolean) {
+        if (mmsEnabledForIme == enabled) return
+        mmsEnabledForIme = enabled
+        updateReceiveContentRegistration()
+
+        // Gboard sofort über die geänderten unterstützten Inhaltstypen informieren.
+        try {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.restartInput(this)
+        } catch (_: Exception) {
+        }
     }
 
     fun setTextFromCompose(value: String) {
@@ -195,10 +215,11 @@ private class RichContentEditText(
         // Listener lesen, sondern Gboard bei JEDEM InputConnection-Aufbau
         // ausdrücklich mitteilen. Das ist auf manchen OEM-/Gboard-Versionen
         // nötig, damit GIF- und Sticker-Schaltflächen aktiviert werden.
-        EditorInfoCompat.setContentMimeTypes(outAttrs, RICH_MIME_TYPES)
+        val mimeTypes = if (mmsEnabledForIme) RICH_MIME_TYPES else emptyArray()
+        EditorInfoCompat.setContentMimeTypes(outAttrs, mimeTypes)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-            outAttrs.contentMimeTypes = RICH_MIME_TYPES
+            outAttrs.contentMimeTypes = mimeTypes
         }
 
         return InputConnectionCompat.createWrapper(this, base, outAttrs)
@@ -384,6 +405,8 @@ private const val PREFS_NOTIFY_POPUP = "notify_popup"
 private const val PREFS_NOTIFY_SOUND = "notify_sound"
 private const val PREFS_NOTIFY_VIBRATE = "notify_vibrate"
 private const val PREFS_NOTIFY_PREVIEW = "notify_preview"
+private const val PREFS_MMS_ENABLED = "mms_enabled"
+private const val PREFS_MMS_COST_WARNING_SHOWN = "mms_cost_warning_shown"
 private const val PREFS_ACTIVE_PHONE = "active_phone"
 private const val PREFS_UNREAD = "unread_total"
 private const val PREFS_UNREAD_PHONES = "unread_phones"
@@ -413,6 +436,91 @@ private fun notifyBool(context: Context, key: String, standard: Boolean = true):
 
 private fun setNotifyBool(context: Context, key: String, value: Boolean) {
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(key, value).apply()
+}
+
+private fun mmsAktiv(context: Context): Boolean =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(PREFS_MMS_ENABLED, true)
+
+private fun setMmsAktiv(context: Context, value: Boolean) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit().putBoolean(PREFS_MMS_ENABLED, value).apply()
+}
+
+private fun mmsKostenHinweisGezeigt(context: Context): Boolean =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(PREFS_MMS_COST_WARNING_SHOWN, false)
+
+private fun setMmsKostenHinweisGezeigt(context: Context, value: Boolean) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit().putBoolean(PREFS_MMS_COST_WARNING_SHOWN, value).apply()
+}
+
+private fun zeigeTestBenachrichtigung(context: Context) {
+    if (Build.VERSION.SDK_INT >= 33 &&
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) != PackageManager.PERMISSION_GRANTED
+    ) {
+        Toast.makeText(
+            context,
+            "Benachrichtigungsberechtigung fehlt. Öffne die Android-Einstellungen.",
+            Toast.LENGTH_LONG
+        ).show()
+        return
+    }
+
+    val sound = notifyBool(context, PREFS_NOTIFY_SOUND)
+    val vibrate = notifyBool(context, PREFS_NOTIFY_VIBRATE)
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    val channelId = "leos_test_v300_${if (sound) "s" else "silent"}_${if (vibrate) "v" else "nov"}"
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(
+            channelId,
+            "Leo's Messenger – Test",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Testbenachrichtigungen von Leo's Messenger"
+            enableVibration(vibrate)
+            if (sound) {
+                val soundUri = Settings.System.DEFAULT_NOTIFICATION_URI
+                val audioAttributes = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                setSound(soundUri, audioAttributes)
+            } else {
+                setSound(null, null)
+            }
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    val openIntent = Intent(context, MainActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+    }
+    val pending = PendingIntent.getActivity(
+        context,
+        3000,
+        openIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    val notification = NotificationCompat.Builder(context, channelId)
+        .setSmallIcon(android.R.drawable.sym_action_chat)
+        .setContentTitle("Leo's Messenger – Test")
+        .setContentText("Benachrichtigungen funktionieren.")
+        .setContentIntent(pending)
+        .setAutoCancel(true)
+        .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setVibrate(if (vibrate) longArrayOf(0, 180, 100, 180) else longArrayOf(0))
+        .build()
+
+    manager.notify(3000, notification)
+    Toast.makeText(context, "Test-Benachrichtigung gesendet", Toast.LENGTH_SHORT).show()
 }
 
 private fun zeigeSmsBenachrichtigung(context: Context, nummer: String, text: String) {
@@ -1045,6 +1153,14 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
     var einstellungenOffen by remember { mutableStateOf(false) }
     var hilfeOffen by remember { mutableStateOf(false) }
     var papierkorbOffen by remember { mutableStateOf(false) }
+    var mmsEnabled by remember { mutableStateOf(mmsAktiv(context)) }
+    var vibrationEnabled by remember { mutableStateOf(notifyBool(context, PREFS_NOTIFY_VIBRATE)) }
+
+    // V3.0.2: Fertigen Text aus anderen Apps (z.B. GitHub, Browser, Notizen)
+    // über Android "Teilen" übernehmen und anschließend einen Chat auswählen.
+    var teilenDialogOffen by remember { mutableStateOf(false) }
+    var geteilterText by remember { mutableStateOf<String?>(null) }
+    var vorgegebenerText by remember { mutableStateOf<String?>(null) }
 
     val papierkorb = remember { mutableStateListOf<Chat>().apply { addAll(ladePapierkorb(context)) } }
     var schriftgroesse by remember { mutableIntStateOf(ladeSchriftgroesse(context)) }
@@ -1056,34 +1172,50 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
     var chatAnimation by remember { mutableStateOf(ladeChatAnimation(context)) }
     val akzentFarbe = farbeAuswahl(farbeUebersicht)
 
-    // V1.1.7: Aufrufe aus Kontakte/Telefon mit sms: oder smsto: direkt in den passenden Chat leiten.
+    // Aufrufe aus Kontakte/Telefon mit sms:/smsto: sowie Textfreigaben
+    // aus anderen Apps direkt übernehmen.
     LaunchedEffect(smsIntent) {
-        val intent = smsIntent
-        if (intent != null && intent.action == Intent.ACTION_SENDTO) {
-            val data = intent.data
-            val scheme = data?.scheme?.lowercase(Locale.getDefault())
-            if (scheme == "sms" || scheme == "smsto" || scheme == "mms" || scheme == "mmsto") {
-                val rohNummer = data?.schemeSpecificPart.orEmpty().substringBefore("?")
-                val nummer = Uri.decode(rohNummer).trim()
-                if (nummer.isNotBlank()) {
-                    var index = chats.indexOfFirst { gleicheTelefonnummer(it.telefon, nummer) }
-                    if (index < 0) {
-                        val kontaktName = findeKontaktName(context, nummer) ?: nummer
-                        val neuerChat = Chat(
-                            id = System.currentTimeMillis(),
-                            name = kontaktName,
-                            kuerzel = kuerzelAusName(kontaktName),
-                            nachrichten = emptyList(),
-                            telefon = nummer
-                        )
-                        chats.add(0, neuerChat)
-                        speichereChats(context, chats)
-                        index = 0
+        val intent = smsIntent ?: return@LaunchedEffect
+
+        when (intent.action) {
+            Intent.ACTION_SENDTO -> {
+                val data = intent.data
+                val scheme = data?.scheme?.lowercase(Locale.getDefault())
+                if (scheme == "sms" || scheme == "smsto" || scheme == "mms" || scheme == "mmsto") {
+                    val rohNummer = data?.schemeSpecificPart.orEmpty().substringBefore("?")
+                    val nummer = Uri.decode(rohNummer).trim()
+                    if (nummer.isNotBlank()) {
+                        var index = chats.indexOfFirst { gleicheTelefonnummer(it.telefon, nummer) }
+                        if (index < 0) {
+                            val kontaktName = findeKontaktName(context, nummer) ?: nummer
+                            val neuerChat = Chat(
+                                id = System.currentTimeMillis(),
+                                name = kontaktName,
+                                kuerzel = kuerzelAusName(kontaktName),
+                                nachrichten = emptyList(),
+                                telefon = nummer
+                            )
+                            chats.add(0, neuerChat)
+                            speichereChats(context, chats)
+                            index = 0
+                        }
+                        offenerChatId = chats[index].id
                     }
-                    offenerChatId = chats[index].id
                 }
+                onSmsIntentVerarbeitet()
             }
-            onSmsIntentVerarbeitet()
+
+            Intent.ACTION_SEND -> {
+                val typ = intent.type.orEmpty()
+                if (typ.startsWith("text/")) {
+                    val textZumTeilen = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty().trim()
+                    if (textZumTeilen.isNotBlank()) {
+                        geteilterText = textZumTeilen
+                        teilenDialogOffen = true
+                    }
+                }
+                onSmsIntentVerarbeitet()
+            }
         }
     }
 
@@ -1111,6 +1243,16 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             onEinstellungen = { einstellungenOffen = true },
             onHilfe = { hilfeOffen = true },
             onPapierkorb = { papierkorbOffen = true },
+            mmsAktiv = mmsEnabled,
+            vibrationAktiv = vibrationEnabled,
+            onMmsAendern = { aktiv ->
+                mmsEnabled = aktiv
+                setMmsAktiv(context, aktiv)
+            },
+            onVibrationAendern = { aktiv ->
+                vibrationEnabled = aktiv
+                setNotifyBool(context, PREFS_NOTIFY_VIBRATE, aktiv)
+            },
             onSmsNeuEinlesen = {
                 val lesenErlaubt = ContextCompat.checkSelfPermission(
                     context, Manifest.permission.READ_SMS
@@ -1150,6 +1292,9 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             schriftgroesse = schriftgroesse,
             empfangsAnimationId = empfangsAnimationId,
             oeffnenAnimation = chatAnimation,
+            mmsAktiv = mmsEnabled,
+            vorgegebenerText = vorgegebenerText,
+            onVorgegebenenTextUebernommen = { vorgegebenerText = null },
             onZurueck = { offenerChatId = null },
             onKontaktAktualisieren = {
                 val index = chats.indexOfFirst { it.id == offenerChat.id }
@@ -1171,7 +1316,16 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
             },
             onNachrichtSenden = { text, bildUri ->
                 val erfolgreich = if (bildUri != null) {
-                    sendeMms(context, offenerChat.telefon, text, bildUri)
+                    if (!mmsEnabled) {
+                        Toast.makeText(
+                            context,
+                            "MMS ist deaktiviert. Aktiviere MMS im Hauptmenü.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        false
+                    } else {
+                        sendeMms(context, offenerChat.telefon, text, bildUri)
+                    }
                 } else {
                     sendeSms(context, offenerChat.telefon, text)
                 }
@@ -1202,6 +1356,70 @@ fun MessengerApp(context: Context, smsIntent: Intent? = null, onSmsIntentVerarbe
                 )
             }
         }
+    }
+
+    if (teilenDialogOffen && !geteilterText.isNullOrBlank()) {
+        AlertDialog(
+            onDismissRequest = {
+                teilenDialogOffen = false
+                geteilterText = null
+            },
+            title = { Text("Text senden an …") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        geteilterText.orEmpty(),
+                        maxLines = 5,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    if (chats.isEmpty()) {
+                        Text("Noch keine Chats vorhanden.")
+                    } else {
+                        chats
+                            .sortedByDescending { it.nachrichten.maxOfOrNull { n -> n.zeitMillis } ?: 0L }
+                            .forEach { chat ->
+                                TextButton(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = {
+                                        vorgegebenerText = geteilterText
+                                        geteilterText = null
+                                        teilenDialogOffen = false
+                                        offenerChatId = chat.id
+                                    }
+                                ) {
+                                    Text(
+                                        if (chat.telefon.isNotBlank()) "${chat.name}  ·  ${chat.telefon}" else chat.name,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vorgegebenerText = geteilterText
+                        teilenDialogOffen = false
+                        neuerChatDialog = true
+                    }
+                ) { Text("Neuer Chat") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    teilenDialogOffen = false
+                    geteilterText = null
+                }) { Text("Abbrechen") }
+            }
+        )
     }
 
     if (neuerChatDialog) {
@@ -1673,6 +1891,10 @@ private fun ChatUebersicht(
     onEinstellungen: () -> Unit,
     onHilfe: () -> Unit,
     onPapierkorb: () -> Unit,
+    mmsAktiv: Boolean,
+    vibrationAktiv: Boolean,
+    onMmsAendern: (Boolean) -> Unit,
+    onVibrationAendern: (Boolean) -> Unit,
     onSmsNeuEinlesen: () -> Unit,
     onBearbeiten: (Chat) -> Unit,
     onLoeschen: (Chat) -> Unit
@@ -1681,13 +1903,16 @@ private fun ChatUebersicht(
     val context = androidx.compose.ui.platform.LocalContext.current
     var hauptmenuOffen by remember { mutableStateOf(false) }
     var sortiermenuOffen by remember { mutableStateOf(false) }
+    var mmsWarnungOffen by remember { mutableStateOf(false) }
+    var mmsWarnungNurInfo by remember { mutableStateOf(false) }
+    var benachrichtigungenOffen by remember { mutableStateOf(false) }
     var sortierung by remember { mutableStateOf(ladeSortierung(context)) }
     var infoOffen by remember { mutableStateOf(false) }
     val appVersion = remember(context) {
         try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.0.18"
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "3.0.2"
         } catch (_: Exception) {
-            "2.0.18"
+            "3.0.2"
         }
     }
     val scope = rememberCoroutineScope()
@@ -1707,19 +1932,141 @@ private fun ChatUebersicht(
 
     if (infoOffen) {
         val anzahlNachrichten = chats.sumOf { it.nachrichten.size }
+        val istStandardSmsApp = try {
+            Telephony.Sms.getDefaultSmsPackage(context) == context.packageName
+        } catch (_: Exception) {
+            false
+        }
+        val benachrichtigungenAktiv = notifyBool(context, PREFS_NOTIFY)
         AlertDialog(
             onDismissRequest = { infoOffen = false },
             title = { Text("Leo`s Messenger V$appVersion") },
             text = {
                 Text(
                     "${chats.size} Chats · $anzahlNachrichten Nachrichten\n\n" +
-                        "Aktuelle Version: V$appVersion\n\n" +
+                        "Aktuelle Version: V$appVersion\n" +
+                        "Standard-SMS-App: ${if (istStandardSmsApp) "Ja" else "Nein"}\n" +
+                        "MMS: ${if (mmsAktiv) "Ein" else "Aus"}\n" +
+                        "Vibration: ${if (vibrationAktiv) "Ein" else "Aus"}\n" +
+                        "Benachrichtigungen: ${if (benachrichtigungenAktiv) "Ein" else "Aus"}\n\n" +
                         "SMS/MMS, Bildanhänge sowie Gboard-GIF-/Sticker-Unterstützung. " +
-                        "Die Eingabeleiste und der Nachrichtenbereich berücksichtigen die Bildschirmtastatur gemeinsam."
+                        "Fertige Texte lassen sich über Android Teilen an Leo's Messenger übergeben."
                 )
             },
             confirmButton = {
                 TextButton(onClick = { infoOffen = false }) { Text("OK") }
+            }
+        )
+    }
+
+    if (mmsWarnungOffen) {
+        AlertDialog(
+            onDismissRequest = { mmsWarnungOffen = false },
+            title = { Text(if (mmsWarnungNurInfo) "MMS-Kostenhinweis" else "MMS aktivieren?") },
+            text = {
+                Text(
+                    "Beim Versenden von MMS können – abhängig von deinem Mobilfunktarif – " +
+                        "Kosten durch deinen Netzbetreiber anfallen. Leo's Messenger hat keinen " +
+                        "Einfluss auf diese Kosten."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (!mmsWarnungNurInfo) {
+                        onMmsAendern(true)
+                        setMmsKostenHinweisGezeigt(context, true)
+                    }
+                    mmsWarnungOffen = false
+                }) {
+                    Text(if (mmsWarnungNurInfo) "OK" else "Aktivieren")
+                }
+            },
+            dismissButton = {
+                if (!mmsWarnungNurInfo) {
+                    TextButton(onClick = { mmsWarnungOffen = false }) { Text("Abbrechen") }
+                }
+            }
+        )
+    }
+
+    if (benachrichtigungenOffen) {
+        var nEnabled by remember { mutableStateOf(notifyBool(context, PREFS_NOTIFY)) }
+        var nPopup by remember { mutableStateOf(notifyBool(context, PREFS_NOTIFY_POPUP)) }
+        var nSound by remember { mutableStateOf(notifyBool(context, PREFS_NOTIFY_SOUND)) }
+        var nPreview by remember { mutableStateOf(notifyBool(context, PREFS_NOTIFY_PREVIEW)) }
+
+        AlertDialog(
+            onDismissRequest = { benachrichtigungenOffen = false },
+            title = { Text("Benachrichtigungen") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    @Composable fun Zeile(
+                        text: String,
+                        checked: Boolean,
+                        enabled: Boolean = true,
+                        onChange: (Boolean) -> Unit
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text, modifier = Modifier.weight(1f))
+                            Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
+                        }
+                    }
+
+                    Zeile("Benachrichtigungen", nEnabled) {
+                        nEnabled = it
+                        setNotifyBool(context, PREFS_NOTIFY, it)
+                    }
+                    Zeile("Pop-up / Heads-up", nPopup, nEnabled) {
+                        nPopup = it
+                        setNotifyBool(context, PREFS_NOTIFY_POPUP, it)
+                    }
+                    Zeile("Ton", nSound, nEnabled) {
+                        nSound = it
+                        setNotifyBool(context, PREFS_NOTIFY_SOUND, it)
+                    }
+                    Zeile("Vibration", vibrationAktiv, nEnabled) {
+                        onVibrationAendern(it)
+                    }
+                    Zeile("Nachrichtenvorschau", nPreview, nEnabled) {
+                        nPreview = it
+                        setNotifyBool(context, PREFS_NOTIFY_PREVIEW, it)
+                    }
+
+                    HorizontalDivider()
+
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { zeigeTestBenachrichtigung(context) }
+                    ) {
+                        Text("Test-Benachrichtigung senden")
+                    }
+
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                }
+                            } else {
+                                Intent(
+                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            }
+                            context.startActivity(intent)
+                        }
+                    ) {
+                        Text("Einstellungen für Android")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { benachrichtigungenOffen = false }) { Text("Schließen") }
             }
         )
     }
@@ -1782,6 +2129,98 @@ private fun ChatUebersicht(
                             expanded = hauptmenuOffen,
                             onDismissRequest = { hauptmenuOffen = false }
                         ) {
+                            Text(
+                                "Nachrichten",
+                                modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            DropdownMenuItem(
+                                text = { Text("SMS/MMS-Verlauf neu einlesen") },
+                                onClick = {
+                                    hauptmenuOffen = false
+                                    onSmsNeuEinlesen()
+                                }
+                            )
+
+                            HorizontalDivider()
+
+                            Text(
+                                "Benachrichtigungen & MMS",
+                                modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("MMS", modifier = Modifier.weight(1f))
+                                        Switch(
+                                            checked = mmsAktiv,
+                                            onCheckedChange = null
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    hauptmenuOffen = false
+                                    if (mmsAktiv) {
+                                        onMmsAendern(false)
+                                    } else if (!mmsKostenHinweisGezeigt(context)) {
+                                        mmsWarnungNurInfo = false
+                                        mmsWarnungOffen = true
+                                    } else {
+                                        onMmsAendern(true)
+                                    }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("MMS-Kostenhinweis erneut anzeigen") },
+                                onClick = {
+                                    hauptmenuOffen = false
+                                    mmsWarnungNurInfo = true
+                                    mmsWarnungOffen = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Vibration", modifier = Modifier.weight(1f))
+                                        Switch(
+                                            checked = vibrationAktiv,
+                                            onCheckedChange = null
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    hauptmenuOffen = false
+                                    onVibrationAendern(!vibrationAktiv)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Benachrichtigungen") },
+                                onClick = {
+                                    hauptmenuOffen = false
+                                    benachrichtigungenOffen = true
+                                }
+                            )
+
+                            HorizontalDivider()
+
+                            Text(
+                                "Ansicht & Verwaltung",
+                                modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             DropdownMenuItem(
                                 text = { Text("Einstellungen") },
                                 onClick = {
@@ -1797,15 +2236,21 @@ private fun ChatUebersicht(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("SMS/MMS-Verlauf neu einlesen") },
+                                text = { Text("Papierkorb") },
                                 onClick = {
                                     hauptmenuOffen = false
-                                    onSmsNeuEinlesen()
+                                    onPapierkorb()
                                 }
                             )
-                            DropdownMenuItem(
-                                text = { Text("Papierkorb") },
-                                onClick = { hauptmenuOffen = false; onPapierkorb() }
+
+                            HorizontalDivider()
+
+                            Text(
+                                "Hilfe & Info",
+                                modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
                             )
                             DropdownMenuItem(
                                 text = { Text("Hilfe") },
@@ -2110,6 +2555,9 @@ private fun ChatAnsicht(
     schriftgroesse: Int,
     empfangsAnimationId: Long,
     oeffnenAnimation: String,
+    mmsAktiv: Boolean,
+    vorgegebenerText: String?,
+    onVorgegebenenTextUebernommen: () -> Unit,
     onZurueck: () -> Unit,
     onKontaktAktualisieren: () -> Unit,
     onNachrichtLoeschen: (Nachricht) -> Unit,
@@ -2118,6 +2566,18 @@ private fun ChatAnsicht(
     var eingabe by remember(chat.id) { mutableStateOf("") }
     var anhangUri by remember(chat.id) { mutableStateOf<Uri?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    LaunchedEffect(vorgegebenerText) {
+        val text = vorgegebenerText?.trim().orEmpty()
+        if (text.isNotBlank()) {
+            eingabe = if (eingabe.isBlank()) text else "$eingabe\n$text"
+            onVorgegebenenTextUebernommen()
+        }
+    }
+
+    LaunchedEffect(mmsAktiv) {
+        if (!mmsAktiv) anhangUri = null
+    }
     val bildLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
@@ -2246,10 +2706,20 @@ private fun ChatAnsicht(
         }
     }
 
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+
     var zurueckLaeuft by remember(chat.id) { mutableStateOf(false) }
 
     fun animiertZurueck() {
         if (zurueckLaeuft) return
+
+        // V3.0.2: Beim Verlassen des Chats Tastatur und Fokus sofort
+        // schließen, bevor die Rückwärtsanimation zur Übersicht startet.
+        // Dadurch bleibt Gboard nicht mehr über der Chat-Übersicht stehen.
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
+
         zurueckLaeuft = true
         if (oeffnenAnimation == "Keine") {
             onZurueck()
@@ -2269,58 +2739,18 @@ private fun ChatAnsicht(
     // V1.7.0: Auch Android-Zurück / Zurück-Geste zuerst animieren.
     BackHandler(enabled = true) { animiertZurueck() }
 
-    // V2.0.19: IME-Bewegung direkt mit der echten Android-Tastaturanimation
-    // synchronisieren. Kein eigener Tween mehr: Die Eingabezeile und der
-    // Chatbereich folgen jedem Animations-Frame von Gboard. Dadurch bleibt
-    // der letzte Chatinhalt oberhalb der Tastatur und die Bewegung wirkt
-    // deutlich flüssiger, ohne dass die Tastatur den Chat überdeckt.
+    // V3.0.2: Android übernimmt das Verkleinern des Chatfensters über
+    // windowSoftInputMode="adjustResize". Dadurch wird der gesamte sichtbare
+    // Chatbereich beim Öffnen von Gboard nach oben verschoben und nichts
+    // bleibt mehr unter der Tastatur. Wir scrollen nur noch weich zur letzten
+    // Nachricht, sobald die IME sichtbar wird.
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val rootView = LocalView.current
-    var imeLiftPx by remember(chat.id) { mutableIntStateOf(0) }
-
-    DisposableEffect(rootView, chat.id) {
-        fun updateIme(insets: WindowInsetsCompat?) {
-            if (insets == null) return
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
-            imeLiftPx = (ime - nav).coerceAtLeast(0)
-        }
-
-        // Aktuellen Zustand übernehmen, falls die Tastatur schon sichtbar ist.
-        updateIme(ViewCompat.getRootWindowInsets(rootView))
-
-        val callback = object : WindowInsetsAnimationCompat.Callback(
-            WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE
-        ) {
-            override fun onProgress(
-                insets: WindowInsetsCompat,
-                runningAnimations: MutableList<WindowInsetsAnimationCompat>
-            ): WindowInsetsCompat {
-                updateIme(insets)
-                return insets
-            }
-
-            override fun onEnd(animation: WindowInsetsAnimationCompat) {
-                updateIme(ViewCompat.getRootWindowInsets(rootView))
-            }
-        }
-
-        ViewCompat.setWindowInsetsAnimationCallback(rootView, callback)
-        ViewCompat.requestApplyInsets(rootView)
-
-        onDispose {
-            ViewCompat.setWindowInsetsAnimationCallback(rootView, null)
-        }
-    }
-
-    val imeLift = with(density) { imeLiftPx.toDp() }
-    val keyboardOpen = imeLiftPx > 0
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    val keyboardOpen = imeBottomPx > 0
 
     LaunchedEffect(keyboardOpen, chat.nachrichten.size) {
         if (keyboardOpen && chat.nachrichten.isNotEmpty()) {
-            // Kurz nach Beginn der IME-Animation den Nachrichtenverlauf
-            // weich an die neue sichtbare Höhe anpassen.
-            delay(20)
+            delay(40)
             listState.animateScrollToItem(chat.nachrichten.lastIndex)
         }
     }
@@ -2431,7 +2861,6 @@ private fun ChatAnsicht(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .offset(y = -imeLift)
             ) {
                 Column(
                     Modifier
@@ -2463,7 +2892,10 @@ private fun ChatAnsicht(
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
-                                .clickable { bildLauncher.launch(arrayOf("image/*")) },
+                                .graphicsLayer(alpha = if (mmsAktiv) 1f else 0.32f)
+                                .clickable(enabled = mmsAktiv) {
+                                    bildLauncher.launch(arrayOf("image/*"))
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Text("📎", fontSize = 20.sp)
@@ -2513,6 +2945,7 @@ private fun ChatAnsicht(
                                     }
                                 },
                                 update = { editText ->
+                                    editText.setMmsEnabled(mmsAktiv)
                                     editText.setTextFromCompose(eingabe)
                                     editText.hint = if (anhangUri == null) "Nachricht" else "Text zur MMS"
                                     editText.setTextColor(textFarbe)
@@ -2555,7 +2988,6 @@ private fun ChatAnsicht(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(bottom = imeLift)
                 .onGloballyPositioned { coords ->
                     chatBereichY = coords.positionInRoot().y
                 }

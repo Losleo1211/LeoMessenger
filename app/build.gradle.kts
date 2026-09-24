@@ -15,8 +15,8 @@ android {
         applicationId = "at.leosnet.leosmessenger"
         minSdk = 24
         targetSdk = 36
-        versionCode = 219
-        versionName = "2.0.19"
+        versionCode = 302
+        versionName = "3.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
